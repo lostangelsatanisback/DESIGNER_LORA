@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+*.egg-info/
+outputs/
+*.log
+*.zip
+anchor_refs/
+legacy/
+.thumbs/

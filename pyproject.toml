@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lora-studio"
+version = "2.0.0"
+description = "Local, private, production-grade LoRA dataset designer (extract / curate / package)"
+requires-python = ">=3.10"
+# Core is intentionally dependency-free (stdlib + ffmpeg binary).
+dependencies = []
+
+[project.optional-dependencies]
+# Smart curation: face detection + identity filtering (InsightFace buffalo_l)
+ai = [
+    "numpy",
+    "insightface>=0.7.3",
+    "onnxruntime>=1.16",
+    "opencv-python-headless>=4.8",
+    "Pillow>=10",
+]
+# Faster basic curation scoring
+fast = ["Pillow>=10"]
+# Diversity clustering: CLIP embeddings (reuses torch already in Forge envs)
+cluster = [
+    "torch>=2.1",
+    "open_clip_torch>=2.20",
+    "numpy",
+    "Pillow>=10",
+]
+# WD14 auto-captioning
+caption = [
+    "numpy",
+    "onnxruntime>=1.16",
+    "huggingface_hub>=0.20",
+    "Pillow>=10",
+]
+# Phase 6 local diffusers test backend (Forge API backend needs nothing)
+eval = [
+    "torch>=2.1",
+    "diffusers>=0.27",
+    "transformers>=4.40",
+    "safetensors",
+    "accelerate",
+    "Pillow>=10",
+]
+all = ["lora-studio[ai,cluster,caption,eval]"]
+
+[project.scripts]
+lora-studio = "lora_studio.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["lora_studio*"]

@@ -1,0 +1,6 @@
+# Known-good pins for the a1111 conda env (gradio 3.41 era).
+# Repairs the pydantic-v2 breakage:  pip install -r constraints-a1111.txt
+pydantic==1.10.13
+fastapi==0.94.0
+gradio==3.41.2
+onnxruntime>=1.20
