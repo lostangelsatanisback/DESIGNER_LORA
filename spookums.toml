@@ -1,7 +1,5 @@
-# LoRA Designer Studio project file
 name = "SPOOKUMS_STUDIO"
 
-# Source media (never modified)
 video_dirs = [
     "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/complete",
     "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/ExtraLarge",
@@ -13,18 +11,12 @@ video_dirs = [
     "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/Small",
 ]
 photos_dir = "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/PHOTOS"
-
-# All derived data (frames, manifest, datasets) goes here
 output_base = "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/EXTRACTED_FRAMES"
-
-# Training identity
-trigger_token = "ohwx"
+trigger_token = "spookums"
 class_word = "person"
-
-# 5-15 clear reference images of the subject, for identity curation
 anchor_dir = "anchor_dir = "/Users/snoozeybnuiadmin/DESIGNER_LORA/anchor_refs""
-
-# Existing Forge/reForge install (models reused in later phases)
 forge_root = "/Users/snoozeybnuiadmin/FORGE_REPO/stable-diffusion-webui-reForge"
-
 ui_port = 7861
+sd_scripts_dir = "~/sd-scripts"
+base_model = "/Users/snoozeybnuiadmin/FORGE_REPO/stable-diffusion-webui-reForge/models/Stable-diffusion/ponyDiffusionV6XL_v6StartWithThisOne.safetensors"
+lora_output_dir = ""

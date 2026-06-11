@@ -1,4 +1,28 @@
-# LoRA Designer Studio (v2.9)
+# LoRA Designer Studio (v3.0)
+
+## Complete End-to-End Workflow
+
+One command, raw library to production pack:
+
+```bash
+conda activate a1111 && cd ~/DESIGNER_LORA
+lora-studio -p spookums.toml ui          # the COMPLETE studio @ :7861
+```
+
+1. **Anchor** (once): drop 5-15 reference photos in `anchor_refs/`, run
+   `lora-studio -p spookums.toml anchor`.
+2. **Dataset Factory** (sidebar) — walk steps 1-7: ingest → analyze → stack
+   plan → curate+caption → build → train + best-epoch sweep → merge & ship.
+   Each step streams progress; everything is resumable.
+3. **Review** anytime — thumbnail grid with per-frame and **bulk**
+   keep/reject, caption editing, framing/cluster filters.
+4. **Test** tab — the Forge backend (:7860) has its own Start/status badge;
+   matrix and sweep use it automatically.
+5. **Playground** — Presets → Refresh → load the shipped pack: base model,
+   merged LoRAs, weights, trigger and sample prompts all pre-filled.
+
+CLI equivalents for every step are listed below; terminal and UI share one
+manifest, so you can mix freely.
 
 ## One command, the whole studio
 

@@ -1,5 +1,10 @@
 # LoRA Designer Studio — Production Roadmap
 
+> **v3.0 SHIPPED** — unified studio: single-command hub with managed
+> Playground/Factory/Forge child apps, 7-step Dataset Factory, bulk review
+> operations, best-epoch sweep, merge studio, and full-preset Playground
+> handoff (checkpoint + stack + weights + trigger + sample prompts).
+
 **Project:** SPOOKUMS_STUDIO · personal LoRA design pipeline for Pony Diffusion V6 XL
 **Hardware:** Apple Silicon M2 Max 32GB (MPS) · 2TB+ source library on CURATOR_SSD
 **Doctrine:** local & private · non-destructive · resumable · manifest-tracked · zero mandatory deps in the core

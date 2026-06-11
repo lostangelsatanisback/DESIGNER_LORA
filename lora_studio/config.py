@@ -151,6 +151,7 @@ class Project:
     recipes: dict = field(default_factory=dict)   # [recipes.NAME] sections
     # Phase 5 training
     sd_scripts_dir: str = ""               # kohya sd-scripts checkout
+    sd_scripts_python: str = ""            # python inside sd-scripts' own venv
     base_model: str = ""                   # Pony Diffusion V6 XL .safetensors path
     lora_output_dir: str = ""              # default: {output_base}/LORA_OUTPUT
 
@@ -321,6 +322,7 @@ def dumps_toml(prj: Project) -> str:
         f'forge_root = "{prj.forge_root}"',
         f"ui_port = {prj.ui_port}",
         f'sd_scripts_dir = "{prj.sd_scripts_dir}"',
+        f'sd_scripts_python = "{prj.sd_scripts_python}"',
         f'base_model = "{prj.base_model}"',
         f'lora_output_dir = "{prj.lora_output_dir}"',
         "",

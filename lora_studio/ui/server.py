@@ -164,14 +164,25 @@ QUEUE = JobQueue()
 
 APPS: dict[str, dict] = {
     "playground": {"script": "grokkie_playground.py", "port": 7870, "proc": None,
-                   "needs_project": False},
+                   "needs_project": False, "args": []},
     "factory": {"script": "grokkie_dataset_factory.py", "port": 7875, "proc": None,
-                "needs_project": True},
+                "needs_project": True, "args": []},
+    # reForge with API enabled - the eval/matrix/sweep generation backend
+    "forge": {"script": "launch.py", "port": 7860, "proc": None,
+              "needs_project": False, "args": ["--api"]},
 }
+
+FORGE_ROOT: Optional[str] = None     # set by main_ui from the project file
 
 
 def _app_script(name: str) -> Optional[Path]:
     fname = APPS[name]["script"]
+    if name == "forge":
+        if FORGE_ROOT:
+            cand = Path(FORGE_ROOT).expanduser() / fname
+            if cand.exists():
+                return cand
+        return None
     for root in (Path(__file__).resolve().parents[2], Path.cwd()):
         cand = root / fname
         if cand.exists():
@@ -229,9 +240,13 @@ def start_app(name: str, project_path: Optional[str]) -> dict:
     if script is None:
         return {"ok": False,
                 "error": f"{info['script']} not found next to the package"}
-    cmd = [sys.executable, str(script), "--port", str(info["port"])]
-    if info["needs_project"] and project_path:
-        cmd += ["-p", project_path]
+    if name == "forge":
+        cmd = [sys.executable, str(script), *info["args"]]
+    else:
+        cmd = [sys.executable, str(script), "--port", str(info["port"]),
+               *info["args"]]
+        if info["needs_project"] and project_path:
+            cmd += ["-p", project_path]
     try:
         log = _app_log_path(name)
         log.parent.mkdir(parents=True, exist_ok=True)
@@ -637,6 +652,10 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
     </select></div>
   <div style="flex:1;color:var(--dim);font-size:11px;align-self:center">
     Click a card to toggle keep (green) / reject (red). Verdicts are manual overrides, stored in the manifest.</div>
+  <div style="display:flex;gap:6px;align-items:flex-end">
+    <button class="mini" onclick="bulkVerdict('keep')">Keep all shown</button>
+    <button class="mini stop" onclick="bulkVerdict('reject')">Reject all shown</button>
+  </div>
 </div>
 <div id="frames"></div>
 <div class="pager">
@@ -744,6 +763,15 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
 <div class="page" id="page-test">
 <div class="grid">
 <div>
+  <div class="card">
+    <div class="topbar"><h2 style="margin:0">Forge Backend</h2>
+      <div><span id="forge_badge" class="badge idle">checking...</span>
+      <button class="mini" onclick="appStart('forge')">Start</button>
+      <button class="mini stop" onclick="appStop('forge')">Stop</button></div>
+    </div>
+    <div class="sub" id="forge_hint">reForge with --api on :7860 - required for the
+    'forge' backend in Test, Matrix and Sweep. Auto-detected if already running.</div>
+  </div>
   <div class="card">
     <h2>Test Generation</h2>
     <div class="row">
@@ -878,16 +906,19 @@ document.querySelectorAll('.tab.pg').forEach(t=>t.onclick=()=>{
   if(t.dataset.g==='tags')loadTags();
   if(t.dataset.g==='builds'){loadBuilds();loadRecipes();}
   if(t.dataset.g==='train'){loadRuns();loadTrainDatasets();}
-  if(t.dataset.g==='test')loadEvals();
+  if(t.dataset.g==='test'){loadEvals();appPoll();}
   if(t.dataset.g==='play'||t.dataset.g==='factory')appPoll();
 });
 async function appPoll(){
   try{
     const s=await(await fetch('/api/apps')).json();
-    for(const name of ['playground','factory']){
-      const st=s[name];const pre=name==='playground'?'play':'factory';
+    for(const name of ['playground','factory','forge']){
+      const st=s[name];if(!st)continue;
+      const pre=name==='playground'?'play':name;
       const b=document.getElementById(pre+'_badge');
-      if(!st.script_found){b.className='badge idle';b.textContent='script not found';continue;}
+      if(!b)continue;
+      if(!st.script_found){b.className='badge idle';
+        b.textContent=name==='forge'?'forge_root not set':'script not found';continue;}
       b.className='badge '+(st.running?'run':'idle');
       b.textContent=st.running?('running :'+st.port):(st.crashed?'CRASHED':'stopped');
       const hint=document.getElementById(pre+'_hint');
@@ -897,12 +928,15 @@ async function appPoll(){
           st.log_tail.replace(/</g,'&lt;')+'</pre>';
       }
       const fr=document.getElementById(pre+'_frame');
-      if(st.running&&fr.src==='about:blank')fr.src='http://127.0.0.1:'+st.port;
-      if(!st.running&&fr.src!=='about:blank')fr.src='about:blank';
+      if(fr){
+        if(st.running&&fr.src==='about:blank')fr.src='http://127.0.0.1:'+st.port;
+        if(!st.running&&fr.src!=='about:blank')fr.src='about:blank';
+      }
     }
   }catch(e){}
   if(document.getElementById('page-play').classList.contains('on')||
-     document.getElementById('page-factory').classList.contains('on'))
+     document.getElementById('page-factory').classList.contains('on')||
+     document.getElementById('page-test').classList.contains('on'))
     setTimeout(appPoll,3000);
 }
 async function appStart(name){
@@ -1102,9 +1136,18 @@ async function poll(){
 }
 function stat(v,k){return `<div class="stat"><div class="v">${v??'-'}</div><div class="k">${k}</div></div>`}
 
+let shownFrameIds=[];
+async function bulkVerdict(action){
+  if(!shownFrameIds.length){alert('Nothing loaded.');return;}
+  if(!confirm(`${action==='reject'?'Reject':'Keep'} ${shownFrameIds.length} frames shown on this page?`))return;
+  await fetch('/api/verdict_bulk',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({frame_ids:shownFrameIds,action:action,output:v('outbase')||''})});
+  loadFrames();
+}
 async function loadFrames(){
   const st=v('fstatus'), fr=v('fframing');
   const r=await(await fetch(`/api/frames?status=${st}&framing=${fr}&offset=${pg*60}&limit=60&output=${encodeURIComponent(v('outbase')||'')}`)).json();
+  shownFrameIds=(r.frames||[]).map(f=>f.id);
   document.getElementById('pinfo').textContent=`${pg*60+1}-${Math.min((pg+1)*60,r.total)} of ${r.total}`;
   document.getElementById('frames').innerHTML=r.frames.map(f=>{
     let cls=f.status==='packaged'?'s-packaged':(f.status==='selected'?'s-selected':(f.status.startsWith('rejected')||f.status==='duplicate'?'s-rejected':''));
@@ -1524,6 +1567,25 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._json(stop_app(str(payload.get("app", ""))))
         elif path == "/api/cancel":
             self._json({"ok": QUEUE.cancel(int(payload.get("id", 0)))})
+        elif path == "/api/verdict_bulk":
+            try:
+                out_base = Path(
+                    str(payload.get("output")
+                        or getattr(self.server, "output_base", self.project.output_base))
+                ).expanduser()
+                ids = [str(i) for i in payload.get("frame_ids", [])][:500]
+                new_status = ("rejected_manual"
+                              if payload.get("action") == "reject" else "selected")
+                conn = manifest.connect(out_base)
+                conn.executemany(
+                    "UPDATE frames SET status=? WHERE frame_id=?",
+                    [(new_status, i) for i in ids],
+                )
+                conn.commit()
+                conn.close()
+                self._json({"ok": True, "updated": len(ids)})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)}, 500)
         elif path == "/api/verdict":
             try:
                 out_base = Path(
@@ -1866,6 +1928,8 @@ class StudioHandler(BaseHTTPRequestHandler):
 
 def main_ui(project: Project, port: Optional[int] = None,
             project_path: Optional[str] = None) -> None:
+    global FORGE_ROOT
+    FORGE_ROOT = project.forge_root or None
     port = port or project.ui_port
     try:
         server = ThreadingHTTPServer(("127.0.0.1", port), StudioHandler)

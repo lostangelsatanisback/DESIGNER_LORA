@@ -324,17 +324,34 @@ def step_ship(sess: FactorySession, preset_name: str,
         except Exception:                                       # noqa: BLE001
             pass
 
+    # derive the playground's checkpoint dropdown label from base_model
+    checkpoint_label = None
+    if sess.prj.base_model:
+        stem = Path(sess.prj.base_model).stem
+        n = stem.lower()
+        btype = ("PONY" if "pony" in n else "FLUX" if "flux" in n
+                 else "SDXL" if ("xl" in n or "sdxl" in n) else "SD15")
+        checkpoint_label = f"{stem}  [{btype}]"
+
+    trig = f"{sess.prj.trigger_token} {sess.prj.class_word}".strip()
     preset = {
-        "checkpoint": None,                       # keep playground's selection
-        "prompt": f"score_9, score_8_up, {sess.prj.trigger_token} "
-                  f"{sess.prj.class_word}, ",
+        "checkpoint": checkpoint_label,
+        "prompt": f"score_9, score_8_up, {trig}, ",
         "negative": ("lowres, bad anatomy, bad hands, deformed, blurry, "
                      "watermark, worst quality"),
         "sampler": "DPM++ 2M Karras", "steps": 30, "cfg": 7.0,
         "width": 1024, "height": 1024,
         "loras": [[n, round(float(w), 2)] for n, w in stack],
         "_factory": {"project": sess.project_path, "shipped_at": time.time(),
-                     "best_epochs": sess.best_epochs},
+                     "best_epochs": sess.best_epochs, "trigger": trig,
+                     "sample_prompts": [
+                         f"score_9, score_8_up, {trig}, studio portrait, "
+                         "soft lighting, photorealistic",
+                         f"score_9, score_8_up, {trig}, full body, casual "
+                         "outfit, outdoor park, golden hour",
+                         f"score_9, score_8_up, {trig}, close-up, detailed "
+                         "skin, natural light",
+                     ]},
     }
     presets = {}
     try:
@@ -371,7 +388,9 @@ def build_ui(project_path: Optional[str]):
             dry = gr.Checkbox(True, label="Dry run first (recommended)")
             b1 = gr.Button("Ingest library", variant="primary")
             o1 = gr.Textbox(lines=18, label="Progress")
-            b1.click(lambda d: step_ingest(sess, d), inputs=dry, outputs=o1)
+            def h_ingest(d):
+                yield from step_ingest(sess, d)
+            b1.click(h_ingest, inputs=dry, outputs=o1)
 
         with gr.Tab("2 · Analyze"):
             b2 = gr.Button("Analyze dataset", variant="primary")
@@ -390,8 +409,9 @@ def build_ui(project_path: Optional[str]):
             c_capt = gr.Checkbox(True, label="WD14 captioning ([caption])")
             b4 = gr.Button("Run curation chain", variant="primary")
             o4 = gr.Textbox(lines=18, label="Progress")
-            b4.click(lambda s, cl, cp: step_curate(sess, s, cl, cp),
-                     inputs=[c_smart, c_clust, c_capt], outputs=o4)
+            def h_curate(s, cl, cp):
+                yield from step_curate(sess, s, cl, cp)
+            b4.click(h_curate, inputs=[c_smart, c_clust, c_capt], outputs=o4)
             gr.Markdown("Review/override frames and captions in the LoRA Studio "
                         "UI (`lora-studio ui`) - same manifest, live.")
 
@@ -407,8 +427,9 @@ def build_ui(project_path: Optional[str]):
             r_crop = gr.Checkbox(False, label="Subject-centered SDXL smart-crop")
             b5 = gr.Button("Build versioned dataset", variant="primary")
             o5 = gr.Textbox(lines=16, label="Progress")
-            b5.click(lambda t, rp, mx, q, vf, sc:
-                     step_build(sess, t, rp, mx, q, vf, sc),
+            def h_build(t, rp, mx, q, vf, sc):
+                yield from step_build(sess, t, rp, mx, q, vf, sc)
+            b5.click(h_build,
                      inputs=[r_type, r_rep, r_max, r_quota, r_val, r_crop],
                      outputs=o5)
 
@@ -419,15 +440,18 @@ def build_ui(project_path: Optional[str]):
                                     label="Sweep backend")
             b6 = gr.Button("Train + sweep", variant="primary")
             o6 = gr.Textbox(lines=18, label="Progress")
-            b6.click(lambda t, s, b: step_train_sweep(sess, t, s, b),
-                     inputs=[t_type, t_sweep, t_backend], outputs=o6)
+            def h_train(t, s, b):
+                yield from step_train_sweep(sess, t, s, b)
+            b6.click(h_train, inputs=[t_type, t_sweep, t_backend], outputs=o6)
 
         with gr.Tab("7 · Merge & Ship"):
             m_name = gr.Textbox(label="Pack name (blank = from plan)")
             b7a = gr.Button("Merge production stack (best epochs)",
                             variant="primary")
             o7 = gr.Textbox(lines=12, label="Merge progress")
-            b7a.click(lambda n: step_merge(sess, n), inputs=m_name, outputs=o7)
+            def h_merge(n):
+                yield from step_merge(sess, n)
+            b7a.click(h_merge, inputs=m_name, outputs=o7)
             gr.Markdown("---")
             s_name = gr.Textbox(label="Playground preset name")
             s_path = gr.Textbox(value=str(PLAYGROUND_PRESETS),

@@ -77,8 +77,9 @@ def build_command(prj: Project, cfg: TrainConfig, dataset_dir: Path,
     if cfg.trainer_cmd:
         cmd = list(cfg.trainer_cmd)
     else:
+        python = prj.sd_scripts_python or "python"   # dedicated venv when set
         cmd = [
-            "python",
+            str(Path(python).expanduser()) if "/" in python else python,
             str(Path(prj.sd_scripts_dir).expanduser() / "sdxl_train_network.py"),
         ]
 
