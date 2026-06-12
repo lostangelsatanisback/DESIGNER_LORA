@@ -228,6 +228,36 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
     sub.add_parser("analyze", help="Dataset analysis + LoRA type detection")
 
+    p_in = sub.add_parser("insights", help="Dataset health / caption lint "
+                                           "/ cluster naming")
+    in_sub = p_in.add_subparsers(dest="insights_cmd", required=True)
+    in_sub.add_parser("health", help="Dataset health score + reasons")
+    in_sub.add_parser("lint", help="Caption/detection contradictions")
+    in_sub.add_parser("clusters", help="Auto-name clusters from tags")
+
+    p_pv = sub.add_parser("previews", help="Forge-render default/low/"
+                                           "medium/high LoRA previews")
+    p_pv.add_argument("--lora", required=True, help="LoRA path or stem")
+    p_ab = sub.add_parser("ab", help="Same-seed A/B compare of two LoRAs")
+    p_ab.add_argument("--a", required=True, metavar="NAME:W")
+    p_ab.add_argument("--b", required=True, metavar="NAME:W")
+    p_ab.add_argument("--seed", type=int, default=4242)
+    p_ab.add_argument("--tail", default="", help="composition descriptors")
+    p_gd = sub.add_parser("golden", help="Golden prompt set regression "
+                                         "for a LoRA")
+    p_gd.add_argument("--lora", required=True)
+    p_gd.add_argument("--weight", type=float, default=0.75)
+    p_gd.add_argument("--previous", default="",
+                      help="prior LoRA name to diff against")
+
+    p_bk = sub.add_parser("backup", help="Archive manifest + presets + "
+                                         "project file + LoRA sidecars")
+    p_bk.add_argument("--out", default="")
+    p_rs = sub.add_parser("restore", help="Extract a backup for manual "
+                                          "placement (non-destructive)")
+    p_rs.add_argument("archive")
+    p_rs.add_argument("--dest", default="restored_backup")
+
     # Concept Control Layer
     p_cc = sub.add_parser(
         "concept", help="Concept Control Layer: explorer scan / stack / batch")
@@ -447,6 +477,58 @@ def main(argv: Optional[list[str]] = None) -> None:
         from .maintenance import space_report
         for row in space_report(prj, prj.output_path):
             print(f"  {row['area']:<16} {str(row['files']):>8} files  {row['human']:>10}")
+    elif cmd == "previews":
+        from pathlib import Path as _P
+        from .lora_explorer import lora_dirs
+        from .qa_render import render_lora_previews
+        lp = _P(args.lora).expanduser()
+        if not lp.exists():
+            for d in lora_dirs(prj):
+                cand = d / f"{args.lora}.safetensors"
+                if cand.exists():
+                    lp = cand
+                    break
+        for u in render_lora_previews(prj, lp):
+            print(u)
+    elif cmd == "ab":
+        from .qa_render import ab_compare
+        def _split(s):
+            n, _, w = s.rpartition(":")
+            return (n or s, float(w) if w and n else 0.75)
+        for u in ab_compare(prj, _split(args.a), _split(args.b),
+                            prompt_tail=args.tail, seed=args.seed):
+            print(u)
+    elif cmd == "golden":
+        from .qa_render import golden_regression
+        for u in golden_regression(prj, args.lora, args.weight,
+                                   args.previous or None):
+            print(u)
+    elif cmd == "backup":
+        from .maintenance import backup_project
+        out = backup_project(prj, args.out or None)
+        print(f"Backup written -> {out}")
+    elif cmd == "restore":
+        from .maintenance import restore_project
+        dest = restore_project(args.archive, args.dest)
+        print(f"Extracted to {dest} - review and place files manually.")
+    elif cmd == "insights":
+        from . import insights
+        conn = manifest.connect(prj.output_path)
+        if args.insights_cmd == "health":
+            h = insights.dataset_health(conn)
+            print(f"Dataset health: {h['score']}/100  "
+                  f"({h.get('selected', 0)} curated frames)")
+            for r in h["reasons"]:
+                print(f"  - {r}")
+        elif args.insights_cmd == "lint":
+            issues = insights.caption_lint(conn)
+            print(f"{len(issues)} frames with caption/detection conflicts")
+            for i in issues[:25]:
+                print(f"  {i['frame_id']}: {'; '.join(i['issues'])}")
+        elif args.insights_cmd == "clusters":
+            names = insights.name_clusters(conn)
+            for cid in sorted(names, key=int):
+                print(f"  c{cid}: {names[cid]}")
     elif cmd == "concept":
         from . import lora_explorer as lx
         cards = lx.scan_loras(prj)
@@ -798,7 +880,12 @@ def main(argv: Optional[list[str]] = None) -> None:
             threshold=args.threshold, char_threshold=args.char_threshold,
             pony_prefix=args.pony_prefix, blacklist=args.blacklist,
             remap=args.remap, prune=args.prune, max_tags=args.max_tags,
-            force=args.force, repo_id=args.repo_id,
+            force=args.force,
+            repo_id={"swinv2": "SmilingWolf/wd-swinv2-tagger-v3",
+                     "vit": "SmilingWolf/wd-vit-tagger-v3",
+                     "vit-large": "SmilingWolf/wd-vit-large-tagger-v3",
+                     "convnext": "SmilingWolf/wd-convnext-tagger-v3",
+                     }.get(args.repo_id, args.repo_id),
         )
         for update in caption_generator(cfg):
             print(update)

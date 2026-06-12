@@ -256,3 +256,33 @@ P1 Foundation ──► P2 Smart Curation ──► P3 Captioning ──► P4 C
 ---
 
 *Next concrete step: Phase 1 — package migration. Say the word and we start.*
+
+## v4 Backlog (agreed 2026-06-12) - implement in order across sessions
+
+SHIPPED v3.13: Review keyboard triage (arrows + K/R + [ ]), measured
+face-similarity in the Variation Review Grid (manifest v11), backup/restore
+commands, compact density toggle.
+SHIPPED v3.12: dataset health report (`insights health`), caption lint
+(`insights lint`), cluster auto-naming (`insights clusters`), orientation
+check utility (`insights.check_orientation`), tagger shorthands
+(`caption --repo-id vit`), Review caption-search filter.
+Already covered by existing features: temporal de-biasing (recipe
+`max_per_video`), wardrobe variation batches (C-layer grid + overrides).
+
+NEXT (priority order):
+1. Review keyboard shortcuts (arrows + K/R verdicts)
+2. Measured face-similarity column in Variation Review Grid
+3. Forge-rendered low/med/high preview images for Explorer
+4. Same-seed A/B compare (two checkpoints/epochs side by side)
+5. Golden prompt set regression per new LoRA
+6. Sidecar editor UI; 7. Stack history timeline; 8. Global search
+9. Duplicate-pose collapse; 10. Aesthetic scoring hook
+11. Expression diversity quotas (landmarks); 12. Rotation auto-fix in extract
+13. Caption A/B sampler (swinv2 vs vit diff); 14. Per-cluster caption rules
+15. Multi-resolution sweep; 16. LR finder; 17. Regularization image gen
+18. Auto-retrain trigger; 19. Sweep grids in hub; 20. Dataset-version diff
+21. rembg/SAM segmentation behind optional_region_segmenter
+22. Brush mask editor; 23. Before/after slider; 24. CoreShift inpaint merge
+    one-click Lab action; 25. Prompt lab (caption-mined descriptors)
+26. Watch-mode full chain + notify; 27. Nightly maintenance job
+28. Project backup/restore command; 29. Density/theme toggle

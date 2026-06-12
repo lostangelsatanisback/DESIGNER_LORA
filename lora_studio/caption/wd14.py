@@ -123,6 +123,20 @@ def _load_tagger(repo_id: str):
         inp = session.get_inputs()[0]
         size = inp.shape[1] if isinstance(inp.shape[1], int) else 448
 
+        # WD14 swinv2 only partially partitions under CoreML and can fail
+        # at inference. Validate with a dummy run; fall back to CPU-only.
+        if providers[0] == "CoreMLExecutionProvider":
+            try:
+                import numpy as _np
+                dummy = _np.zeros((1, size, size, 3), dtype=_np.float32)
+                session.run(None, {inp.name: dummy})
+            except Exception:
+                logging.info("CoreML EP failed for WD14 - falling back "
+                             "to CPUExecutionProvider")
+                session = ort.InferenceSession(
+                    model_path, providers=["CPUExecutionProvider"])
+                inp = session.get_inputs()[0]
+
         tag_rows: list[tuple[str, int]] = []
         with open(tags_path, newline="", encoding="utf-8") as fh:
             reader = csv.DictReader(fh)

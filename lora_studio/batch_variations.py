@@ -289,10 +289,12 @@ def load_batch(conn, batch_id: str) -> dict:
              "slider_state": json.loads(r[3] or "{}"),
              "warnings": json.loads(r[4] or "[]"),
              "output_path": r[5], "preservation_score": r[6],
-             "risk_level": r[7], "status": r[8] or "planned"}
+             "risk_level": r[7], "status": r[8] or "planned",
+             "measured_face_sim": r[9]}
             for r in conn.execute(
                 "SELECT variation_id, seed, loras, slider_state, warnings, "
-                "output_path, preservation_score, risk_level, status "
+                "output_path, preservation_score, risk_level, status, "
+                "measured_face_sim "
                 "FROM variation_jobs WHERE batch_id=? ORDER BY variation_id",
                 (batch_id,))]
     return {"batch_id": batch_id, "spec": json.loads(row[0] or "{}"),
@@ -331,10 +333,22 @@ def run_batch_generator(prj: Project, conn, jobs: list[VariationJob],
             p.mkdir(parents=True, exist_ok=True)
             fp = p / f"{j.variation_id}_seed{j.seed}.png"
             fp.write_bytes(img)
+            sim = None
+            try:
+                from .identity_integration import face_similarity
+                ref = None
+                if prj.anchor_dir:
+                    refs = sorted(Path(prj.anchor_dir).expanduser().glob(
+                        "*.[jp][pn]g"))
+                    ref = refs[0] if refs else None
+                if ref:
+                    sim = face_similarity(fp, ref, prj)
+            except Exception:
+                sim = None
             conn.execute(
-                "UPDATE variation_jobs SET output_path=?, status='generated' "
-                "WHERE batch_id=? AND variation_id=?",
-                (str(fp), j.batch_id, j.variation_id))
+                "UPDATE variation_jobs SET output_path=?, status='generated',"
+                " measured_face_sim=? WHERE batch_id=? AND variation_id=?",
+                (str(fp), sim, j.batch_id, j.variation_id))
             conn.commit()
             yield f"  {j.variation_id} -> {fp.name}"
         except Exception as exc:                          # noqa: BLE001

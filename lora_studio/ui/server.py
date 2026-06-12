@@ -391,9 +391,15 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
 .appdot .dot.run{background:var(--ok,#4caf50)}
 .appdot .dot.crash{background:var(--err,#f44336)}
 .appdot .dotlabel{margin-left:auto;font-size:10px}
+body.compact{font-size:12px}
+body.compact .fcard{width:120px}
+body.compact .filters>div{min-width:110px}
+body.compact h2{margin:4px 0}
 </style></head><body>
 <div class="nav">
-  <div class="brand">LoRA <span>Studio</span></div>
+  <div class="brand">LoRA <span>Studio</span>
+    <span style="float:right;cursor:pointer;font-size:10px;color:var(--dim)"
+      title="toggle compact density" onclick="document.body.classList.toggle('compact')">&#9636;</span></div>
   <div class="group">Generate</div>
   <div class="tab pg on" data-g="play">Playground</div>
   <div class="tab pg" data-g="concept">Concept Control</div>
@@ -412,6 +418,10 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
   <div class="tab pg" data-g="lab">Lab</div>
   <div class="group">&nbsp;</div>
   <div class="tab pg" data-g="settings">Settings</div>
+  <div class="group">Search</div>
+  <div style="padding:2px 10px"><input id="gsearch" placeholder="search all..."
+    style="width:100%;font-size:11px" onchange="gSearch()"></div>
+  <div id="gresults" style="font-size:10px;padding:0 10px;color:var(--dim)"></div>
   <div class="group">Engines</div>
   <div class="appdot" id="dot_forge" onclick="appStart('forge')" title="click to start">
     <span class="dot idle"></span>Forge <span class="dotlabel">...</span></div>
@@ -460,8 +470,18 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
     </select></div>
   <div><label>Denoise (0 = recommended)</label><input id="wd_denoise" value="0" style="width:70px"></div>
   <div><label>Seed</label><input id="wd_seed" value="42" style="width:80px"></div>
+  <div><label>FaceID Guidance</label>
+    <select id="wd_faceid">
+      <option value="off">Off</option>
+      <option value="balanced" selected>Balanced</option>
+      <option value="strong">Strong</option>
+      <option value="maximum">Maximum</option>
+    </select></div>
   <div style="align-self:flex-end">
+    <label style="font-size:11px"><input type="checkbox" id="wd_facelock"> <b>Strong Face Lock</b></label>
     <label style="font-size:11px"><input type="checkbox" id="wd_pose" checked> pose consistency</label>
+    <label style="font-size:11px"><input type="checkbox" id="wd_body"> body structure lock</label>
+    <label style="font-size:11px"><input type="checkbox" id="wd_sil"> silhouette guidance</label>
     <label style="font-size:11px"><input type="checkbox" id="wd_bg" checked> background consistency</label>
     <label style="font-size:11px"><input type="checkbox" id="wd_stack" checked> use Concept Control stack</label>
   </div>
@@ -526,6 +546,8 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
   <button class="mini" onclick="ccSend()">Send to Playground</button>
   <button class="mini" onclick="ccSaveWorkflowPreset()">Save stack preset</button>
   <button class="mini" onclick="ccLoadPresets()">Saved presets</button>
+  <button class="mini" onclick="ccDiffPresets()">Diff presets</button>
+  <button class="mini" onclick="ccHistory()">Stack history</button>
   <button class="mini" id="cc_balance_btn" style="display:none"
     onclick="ccApplyBalance()">Apply Suggested Balance</button>
   <button class="mini" id="cc_clearpins_btn" style="display:none"
@@ -556,6 +578,14 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
     <button class="mini" onclick="ccBatch()">Create Variation Grid</button></div>
 </div>
 <div id="cc_batch" style="font-size:12px"></div>
+<h3 style="margin-top:18px">Variation Review Grid</h3>
+<div class="filters">
+  <div><label>Batch</label><select id="cc_rg_batch"></select></div>
+  <div style="align-self:flex-end">
+    <button class="mini" onclick="rgLoadBatches()">Refresh batches</button>
+    <button class="mini" onclick="rgShow()">Open review grid</button></div>
+</div>
+<div id="cc_review" style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px"></div>
 </div>
 
 <div class="page" id="page-factory">
@@ -799,6 +829,9 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
       <option value="identity_strong">Strong Identity Lock</option>
       <option value="pose_strong">Strong Pose Clarity</option>
     </select></div>
+  <div><label>Caption contains</label>
+    <input id="fcaption" placeholder="e.g. 1boy" style="width:110px"
+           onchange="pg=0;loadFrames()"></div>
   <div><label>Sort</label>
     <select id="fsort" onchange="pg=0;loadFrames()">
       <option value="">path</option>
@@ -1065,7 +1098,7 @@ document.querySelectorAll('.tab.pg').forEach(t=>t.onclick=()=>{
   if(t.dataset.g==='train'){loadRuns();loadTrainDatasets();}
   if(t.dataset.g==='test'){loadEvals();appPoll();}
   if(t.dataset.g==='play'||t.dataset.g==='factory')appPoll();
-  if(t.dataset.g==='concept'){loadConceptSliders();loadConceptCards();loadStarters();}
+  if(t.dataset.g==='concept'){loadConceptSliders();loadConceptCards();loadStarters();rgLoadBatches();}
   if(t.dataset.g==='wardrobe')loadWardrobe();
 });
 
@@ -1103,8 +1136,10 @@ async function loadConceptCards(rescan){
         ((c.concept_meta.control_axes||[]).length?`${c.concept_meta.control_axes.length} control axe(s) `:'')+
         (c.concept_meta.priority_hint!=='normal'?`&middot; ${c.concept_meta.priority_hint} `:'')+
         ((c.concept_meta.known_conflicts||[]).length?`&middot; ${c.concept_meta.known_conflicts.length} known conflict(s)`:'')+`</div>`:'')+
-      `<button class="mini" style="margin-top:4px;width:100%" `+
-      `onclick="event.stopPropagation();ccAddToStack('${c.lora_id}')">${sel?'In stack &#10003;':'Add to stack'}</button></div>`;
+      `<button class="mini" style="margin-top:4px;width:49%" `+
+      `onclick="event.stopPropagation();ccAddToStack('${c.lora_id}')">${sel?'In stack &#10003;':'Add'}</button>`+
+      `<button class="mini" style="margin-top:4px;width:49%;float:right" title="edit sidecar metadata" `+
+      `onclick="event.stopPropagation();ccEditSidecar('${c.lora_id}','${c.profile.family}','${c.profile.identity_risk}',${c.profile.weight_default})">Edit</button></div>`;
   }).join('')||'<span style="color:var(--dim)">No LoRAs found - check lora_output_dir / forge_root, then Rescan.</span>';
 }
 async function ccAddToStack(id){
@@ -1210,6 +1245,10 @@ function wdRequest(){
     garment_direction_prompt:v('wd_prompt')||'',
     selected_loras:loras,
     preserve_pose:document.getElementById('wd_pose').checked,
+    strong_face_lock:document.getElementById('wd_facelock').checked,
+    faceid_preset:v('wd_faceid')||'balanced',
+    body_structure_lock:document.getElementById('wd_body').checked,
+    silhouette_guidance:document.getElementById('wd_sil').checked,
     preserve_background:document.getElementById('wd_bg').checked,
     denoise:parseFloat(v('wd_denoise'))||0,
     seed:parseInt(v('wd_seed'))||42,output:v('outbase')||''};
@@ -1226,6 +1265,8 @@ async function wdReadiness(){
   document.getElementById('wd_readiness').innerHTML=
     `<div><b>${r.region}</b> &middot; denoise ${r.denoise} &middot; identity preservation `+
     `<b>${r.identity_preservation_score}</b> (${r.identity_risk_level} risk)</div>`+
+    (r.identity_tools?`<div>identity tools: <b>${r.identity_tools.join(', ')||'none'}</b>`+
+      ((r.degraded_features||[]).length?` &middot; <span style="color:var(--warn)">degraded: ${r.degraded_features.join(', ')}</span>`:'')+`</div>`:'')+
     (r.auto_adjustment_suggestions||[]).map(s=>`<div style="color:var(--warn)">! ${s}</div>`).join('')+
     (r.consistency_notes||[]).map(s=>`<div style="color:var(--dim)">${s}</div>`).join('')+
     `<table><tr><th>component</th><th>status</th><th>guidance</th></tr>${reqs}</table>`;
@@ -1237,6 +1278,39 @@ async function wdGenerate(){
   document.getElementById('wd_result').innerHTML=r.ok?
     `Queued as hub job #${r.job_id} - watch the Pipeline page; results land in wardrobe_edits/.`:
     `<span style="color:var(--err)">${r.error||'failed'}</span>`;
+}
+async function gSearch(){
+  const q=v('gsearch');if(!q)return;
+  const r=await(await fetch(`/api/search?q=${encodeURIComponent(q)}&output=${encodeURIComponent(v('outbase')||'')}`)).json();
+  const sec=(t,items,fmt)=>items&&items.length?`<div><b>${t}</b>${items.map(fmt).join('')}</div>`:'';
+  document.getElementById('gresults').innerHTML=
+    sec('LoRAs',r.loras,x=>`<div>&bull; ${x}</div>`)+
+    sec('Presets',r.presets,x=>`<div>&bull; ${x}</div>`)+
+    sec('Batches',r.batches,x=>`<div>&bull; ${x}</div>`)+
+    sec('Frames',r.frames,x=>`<div>&bull; ${x.frame_id.slice(0,14)}: ${x.caption}</div>`)||
+    '<div>no matches</div>';
+}
+async function ccEditSidecar(id,fam,risk,w){
+  const family=prompt('Concept family (identity/character/wardrobe/fashion/lighting/pose/style/texture/detail/environment/composition/camera/refinement):',fam);
+  if(family===null)return;
+  const irisk=prompt('Identity risk (none/low/medium/high):',risk);if(irisk===null)return;
+  const wd=prompt('Default weight:',w);if(wd===null)return;
+  const conf=prompt('Known conflicts (comma-separated LoRA ids, blank=none):','');
+  const notes=prompt('Notes (blank=keep):','');
+  const r=await(await fetch('/api/concept/sidecar_save',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({lora_id:id,family:family,identity_risk:irisk,weight_default:wd,
+      known_conflicts:conf,notes:notes})})).json();
+  if(r.ok){loadConceptCards();}else alert(r.error||'failed');
+}
+async function ccHistory(){
+  const r=await(await fetch(`/api/concept/history?output=${encodeURIComponent(v('outbase')||'')}`)).json();
+  document.getElementById('cc_presets').innerHTML='<b>Stack timeline (latest first)</b>'+
+    (r.history||[]).map(h=>{
+      const pl=h.payload||{};
+      return `<div>${h.name.replace('hist_','')} &middot; score <b>${pl.score??'-'}</b> [${pl.risk||''}] `+
+      `${(pl.loras||[]).map(l=>l[0]+':'+l[1]).join(' ')} `+
+      `<button class="mini" onclick='ccApplyPreset({preset_version:2,handoff:{loras:${JSON.stringify(pl.loras||[])}},slider_state:{}})'>Load</button></div>`;
+    }).join('')||'<div style="color:var(--dim)">No history yet - resolve a stack first.</div>';
 }
 async function loadStarters(){
   try{
@@ -1296,6 +1370,46 @@ async function ccSavePreset(){
   const res=await(await fetch('/api/concept/preset_save',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:name,kind:'lora_stack',payload:{sel:ccSel,slider_state:ccState(),stack:r},output:v('outbase')||''})})).json();
   if(!res.ok)alert(res.error||'failed');else ccLoadPresets();
+}
+async function rgLoadBatches(){
+  const r=await(await fetch(`/api/concept/variation/batches?output=${encodeURIComponent(v('outbase')||'')}`)).json();
+  document.getElementById('cc_rg_batch').innerHTML=(r.batches||[]).map(b=>
+    `<option value="${b.batch_id}">${b.batch_id} [${b.mode||''}] ${b.generated}/${b.jobs} generated</option>`).join('')||
+    '<option value="">no batches yet</option>';
+}
+async function rgShow(){
+  const bid=v('cc_rg_batch');if(!bid)return;
+  const r=await(await fetch(`/api/concept/variation/batch/${bid}?output=${encodeURIComponent(v('outbase')||'')}`)).json();
+  if(r.error){alert(r.error);return;}
+  document.getElementById('cc_review').innerHTML=(r.jobs||[]).map(j=>{
+    const img=j.output_path?`<img loading="lazy" src="/api/concept/variation/result/${bid}/${j.variation_id}" style="width:100%;border-radius:4px">`:
+      `<div style="height:120px;background:#11161f;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--dim)">${j.status}</div>`;
+    return `<div style="width:200px;border:1px solid #2a3142;border-radius:6px;padding:6px">${img}`+
+      `<div><b>${j.variation_id}</b> seed ${j.seed} &middot; ${ccRiskBadge(j.risk_level||'info')}</div>`+
+      `<div style="color:var(--dim)">${JSON.stringify(j.slider_state)}</div>`+
+      `<div style="color:var(--dim)">${(j.loras||[]).map(l=>l[0]+':'+l[1]).join(' ')}</div>`+
+      `<div>preservation <b>${j.preservation_score!=null?j.preservation_score:'-'}</b>`+
+      (j.measured_face_sim!=null?` &middot; measured face <b style="color:${j.measured_face_sim>=0.5?'var(--ok,#4caf50)':'var(--warn)'}">${j.measured_face_sim}</b>`:'')+`</div>`+
+      `<button class="mini" style="margin-top:4px;width:100%" onclick="rgPromote('${bid}','${j.variation_id}')">Promote to preset</button></div>`;
+  }).join('')||'<span style="color:var(--dim)">No jobs in this batch.</span>';
+}
+async function rgPromote(bid,vid){
+  const name=prompt('Playground preset name for this winner:',`winner_${vid}`);if(!name)return;
+  const r=await(await fetch('/api/concept/variation/promote',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({batch_id:bid,variation_id:vid,name:name})})).json();
+  alert(r.ok?`Promoted -> Playground preset '${r.name}' (Presets > Refresh > Load).`:(r.error||'failed'));
+}
+async function ccDiffPresets(){
+  const a=prompt('First preset name:');if(!a)return;
+  const b=prompt('Second preset name:');if(!b)return;
+  const r=await(await fetch('/api/concept/preset_diff',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({a:a,b:b})})).json();
+  if(r.error){alert(r.error);return;}
+  document.getElementById('cc_presets').innerHTML=
+    `<div><b>Diff:</b> ${r.a_name} (score ${r.score_a??'-'}) vs ${r.b_name} (score ${r.score_b??'-'})</div>`+
+    `<table><tr><th>LoRA</th><th>A</th><th>B</th><th>delta</th></tr>`+
+    r.rows.map(x=>`<tr><td>${x.lora_id}</td><td>${x.a??'-'}</td><td>${x.b??'-'}</td>`+
+      `<td style="color:${x.delta>0?'var(--warn)':'var(--dim)'}">${x.delta??''}</td></tr>`).join('')+`</table>`;
 }
 async function ccLoadPresets(){
   const r=await(await fetch(`/api/concept/presets?output=${encodeURIComponent(v('outbase')||'')}`)).json();
@@ -1622,7 +1736,8 @@ async function bulkVerdict(action){
 }
 async function loadFrames(){
   const st=v('fstatus'), fr=v('fframing'), sd=v('fstudy')||'', so=v('fsort')||'';
-  const r=await(await fetch(`/api/frames?status=${st}&framing=${fr}&study=${sd}&sort=${so}&offset=${pg*60}&limit=60&output=${encodeURIComponent(v('outbase')||'')}`)).json();
+  const cp=encodeURIComponent(v('fcaption')||'');
+  const r=await(await fetch(`/api/frames?status=${st}&framing=${fr}&study=${sd}&sort=${so}&caption=${cp}&offset=${pg*60}&limit=60&output=${encodeURIComponent(v('outbase')||'')}`)).json();
   shownFrameIds=(r.frames||[]).map(f=>f.id);
   document.getElementById('pinfo').textContent=`${pg*60+1}-${Math.min((pg+1)*60,r.total)} of ${r.total}`;
   document.getElementById('frames').innerHTML=r.frames.map(f=>{
@@ -1648,6 +1763,30 @@ async function loadFrames(){
       `sharp ${f.sharpness==null?'-':f.sharpness.toFixed(0)}${sim}${cl}${cap}</div></div>`;
   }).join('');
 }
+let kbIdx=-1;
+function kbCards(){return Array.from(document.querySelectorAll('#frames .fcard'));}
+function kbFocus(i){
+  const cs=kbCards();if(!cs.length)return;
+  kbIdx=Math.max(0,Math.min(cs.length-1,i));
+  cs.forEach(c=>c.style.outline='');
+  cs[kbIdx].style.outline='2px solid var(--acc,#4af)';
+  cs[kbIdx].scrollIntoView({block:'nearest'});
+}
+document.addEventListener('keydown',e=>{
+  if(!document.getElementById('page-review').classList.contains('on'))return;
+  if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName))return;
+  const cs=kbCards();
+  if(e.key==='ArrowRight'){kbFocus(kbIdx+1);e.preventDefault();}
+  else if(e.key==='ArrowLeft'){kbFocus(kbIdx-1);e.preventDefault();}
+  else if(e.key==='ArrowDown'){kbFocus(kbIdx+6);e.preventDefault();}
+  else if(e.key==='ArrowUp'){kbFocus(kbIdx-6);e.preventDefault();}
+  else if((e.key==='k'||e.key==='K'||e.key==='r'||e.key==='R')&&kbIdx>=0&&cs[kbIdx]){
+    cs[kbIdx].click();          // verdict toggle on the focused card
+    kbFocus(kbIdx+1);e.preventDefault();
+  }
+  else if(e.key===']'){pg++;loadFrames();kbIdx=-1;}
+  else if(e.key==='['&&pg>0){pg--;loadFrames();kbIdx=-1;}
+});
 async function editStudy(id){
   const lbl=prompt('Study label:\\n1 figure_study_candidate\\n2 fashion_study_candidate\\n'+
     '3 lingerie_fashion_candidate\\n4 form_proportion_candidate\\n5 rejected_study\\n\\nEnter 1-5:');
@@ -1812,6 +1951,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 framing = (query.get("framing") or [""])[0]
                 study = (query.get("study") or [""])[0]
                 sort = (query.get("sort") or [""])[0]
+                cap = (query.get("caption") or [""])[0]
                 offset = int((query.get("offset") or ["0"])[0])
                 limit = min(200, int((query.get("limit") or ["60"])[0]))
                 conn = manifest.connect(out_base)
@@ -1820,6 +1960,9 @@ class StudioHandler(BaseHTTPRequestHandler):
                 if framing:
                     where += " AND d.framing = ?"
                     params.append(framing)
+                if cap:
+                    where += " AND c.caption_text LIKE ?"
+                    params.append(f"%{cap}%")
                 # Study Intelligence Layer filters (LEFT JOIN: old manifests
                 # simply return no study rows - never crashes)
                 if study in ("figure_study_candidate", "fashion_study_candidate",
@@ -1841,7 +1984,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                          "fashion_study": "s.fashion_study_score DESC",
                          }.get(sort, "f.path")
                 joins = ("LEFT JOIN detections d ON d.frame_id=f.frame_id "
-                         "LEFT JOIN study_labels s ON s.frame_id=f.frame_id ")
+                         "LEFT JOIN study_labels s ON s.frame_id=f.frame_id "
+                         "LEFT JOIN captions c ON c.frame_id=f.frame_id ")
                 total = conn.execute(
                     f"SELECT COUNT(*) FROM frames f {joins}WHERE {where}",
                     params,
@@ -1852,7 +1996,6 @@ class StudioHandler(BaseHTTPRequestHandler):
                     f"s.study_primary, s.study_confidence, s.study_reason_codes, "
                     f"s.study_review_status, s.study_export_eligible "
                     f"FROM frames f {joins}"
-                    f"LEFT JOIN captions c ON c.frame_id=f.frame_id "
                     f"WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
                     params + [limit, offset],
                 ).fetchall()
@@ -1932,6 +2075,50 @@ class StudioHandler(BaseHTTPRequestHandler):
                                       "notes": v["notes"]}
                                   for k, v in VARIATION_MODES.items()}})
 
+        elif path == "/api/concept/variation/batches":
+            try:
+                conn = manifest.connect(self._out_base(query))
+                rows = conn.execute(
+                    "SELECT batch_id, mode, job_count, created_at, "
+                    "(SELECT COUNT(*) FROM variation_jobs j WHERE "
+                    "j.batch_id=b.batch_id AND j.status='generated') "
+                    "FROM variation_batches b ORDER BY created_at DESC "
+                    "LIMIT 25").fetchall()
+                conn.close()
+                self._json({"batches": [
+                    {"batch_id": r[0], "mode": r[1], "jobs": r[2],
+                     "created_at": r[3], "generated": r[4]}
+                    for r in rows]})
+            except Exception as exc:
+                self._json({"batches": [], "error": str(exc)})
+
+        elif path.startswith("/api/concept/variation/result/"):
+            # generated variation image, served only via its manifest row
+            data = b""
+            try:
+                bid, _, vid = path.rsplit("/", 2)[-2], "", path.rsplit(
+                    "/", 1)[-1]
+                bid = path.split("/api/concept/variation/result/",
+                                 1)[1].split("/")[0]
+                conn = manifest.connect(self._out_base(query))
+                row = conn.execute(
+                    "SELECT output_path FROM variation_jobs WHERE "
+                    "batch_id=? AND variation_id=?", (bid, vid)).fetchone()
+                conn.close()
+                if row and row[0] and Path(row[0]).exists():
+                    data = Path(row[0]).read_bytes()
+            except Exception:
+                data = b""
+            if data:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self.send_error(404)
+            return
+
         elif path.startswith("/api/concept/variation/batch/"):
             try:
                 from ..batch_variations import load_batch
@@ -1946,6 +2133,27 @@ class StudioHandler(BaseHTTPRequestHandler):
         elif path == "/api/concept/sliders":
             from ..concept_control import slider_specs
             self._json({"sliders": slider_specs()})
+
+        elif path == "/api/concept/history":
+            try:
+                from ..concept_control import load_presets
+                conn = manifest.connect(self._out_base(query))
+                hist = load_presets(conn, "stack_history")[-25:]
+                conn.close()
+                self._json({"history": list(reversed(hist))})
+            except Exception as exc:
+                self._json({"history": [], "error": str(exc)})
+
+        elif path == "/api/search":
+            try:
+                from ..insights import global_search
+                conn = manifest.connect(self._out_base(query))
+                res = global_search(conn, self.project,
+                                    (query.get("q") or [""])[0])
+                conn.close()
+                self._json(res)
+            except Exception as exc:
+                self._json({"error": str(exc)})
 
         elif path == "/api/concept/presets":
             try:
@@ -2220,6 +2428,20 @@ class StudioHandler(BaseHTTPRequestHandler):
                     chosen, state, self.project.base_model,
                     overrides=overrides or None,
                     pinned=set(payload.get("pinned") or overrides))
+                try:
+                    from ..insights import log_stack_history
+                    conn = manifest.connect(self._out_base({}))
+                    log_stack_history(conn, {
+                        "loras": ([[stack.identity_anchor.lora_id,
+                                    stack.identity_anchor.weight]]
+                                  if stack.identity_anchor else [])
+                        + [[i.lora_id, i.weight]
+                           for i in stack.concept_loras],
+                        "score": stack.identity_preservation_score,
+                        "risk": stack.risk_level})
+                    conn.close()
+                except Exception:
+                    pass
                 self._json(stack.to_json())
             except Exception as exc:
                 self._json({"error": str(exc)})
@@ -2326,6 +2548,47 @@ class StudioHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)})
 
+        elif path == "/api/concept/variation/promote":
+            try:
+                from ..batch_variations import load_batch
+                from ..pipeline_dag import write_playground_preset
+                bid = str(payload.get("batch_id") or "")
+                vid = str(payload.get("variation_id") or "")
+                conn = manifest.connect(self._out_base({}))
+                data = load_batch(conn, bid)
+                conn.close()
+                job = next((j for j in data.get("jobs", [])
+                            if j["variation_id"] == vid), None)
+                if not job:
+                    self._json({"ok": False, "error": "unknown job"})
+                    return
+                name = str(payload.get("name")
+                           or f"promoted_{bid}_{vid}")
+                target = write_playground_preset(
+                    self.project, name,
+                    [(n, w) for n, w in job["loras"]])
+                self._json({"ok": True, "path": str(target),
+                            "name": name})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)})
+
+        elif path == "/api/concept/preset_diff":
+            try:
+                from ..concept_control import load_presets
+                from ..stack_workflow import diff_stack_presets
+                conn = manifest.connect(self._out_base({}))
+                presets = {pr["name"]: pr["payload"]
+                           for pr in load_presets(conn)}
+                conn.close()
+                a = presets.get(str(payload.get("a") or ""))
+                b = presets.get(str(payload.get("b") or ""))
+                if a is None or b is None:
+                    self._json({"error": "preset not found"})
+                    return
+                self._json(diff_stack_presets(a, b))
+            except Exception as exc:
+                self._json({"error": str(exc)})
+
         elif path == "/api/concept/workflow/save_preset":
             try:
                 from .. import lora_explorer as lx
@@ -2357,6 +2620,32 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "preset_id": rec["preset_id"],
                             "preservation_score":
                                 rec["preservation_score"]})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)})
+
+        elif path == "/api/concept/sidecar_save":
+            try:
+                from .. import lora_explorer as lx
+                cards = {c.lora_id: c for c in
+                         lx.scan_loras_cached(self.project, force=True)}
+                c = cards.get(str(payload.get("lora_id") or ""))
+                if not c:
+                    self._json({"ok": False, "error": "unknown LoRA id"})
+                    return
+                prof = c.profile
+                for k in ("family", "identity_risk", "notes"):
+                    if payload.get(k):
+                        setattr(prof, k, str(payload[k]))
+                if payload.get("weight_default"):
+                    prof.weight_default = float(payload["weight_default"])
+                if payload.get("known_conflicts") is not None:
+                    prof.known_conflicts = [
+                        s.strip() for s in
+                        str(payload["known_conflicts"]).split(",")
+                        if s.strip()]
+                sp = lx.save_sidecar(Path(c.path), prof)
+                lx._SCAN_CACHE["key"] = None      # invalidate
+                self._json({"ok": True, "sidecar": str(sp)})
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)})
 

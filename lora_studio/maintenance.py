@@ -175,3 +175,46 @@ def space_report(prj: Project, output_base: Path) -> list[dict]:
     except Exception:
         pass
     return report
+
+
+def backup_project(prj, out_path=None):
+    """One-command backup: manifest, presets, project file, LoRA sidecars
+    (heavy media excluded).  Returns the archive path."""
+    import tarfile
+    import time
+    from pathlib import Path
+    from .config import DB_NAME
+    out = Path(out_path) if out_path else (
+        Path.home() / f"lora_studio_backup_{time.strftime('%Y%m%d_%H%M')}.tar.gz")
+    repo = Path(__file__).resolve().parents[1]
+    with tarfile.open(out, "w:gz") as tar:
+        db = prj.output_path / DB_NAME
+        if db.exists():
+            tar.add(db, arcname=f"manifest/{DB_NAME}")
+        presets = repo / "outputs" / "playground_presets.json"
+        if presets.exists():
+            tar.add(presets, arcname="outputs/playground_presets.json")
+        for toml in repo.glob("*.toml"):
+            tar.add(toml, arcname=f"project/{toml.name}")
+        # LoRA sidecars (.concept.json / .json next to models)
+        try:
+            from .lora_explorer import lora_dirs
+            for d in lora_dirs(prj):
+                for sc in list(d.glob("*.concept.json")) + list(
+                        d.glob("*.json")):
+                    tar.add(sc, arcname=f"sidecars/{sc.name}")
+        except Exception:
+            pass
+    return out
+
+
+def restore_project(archive, dest_dir):
+    """Extract a backup archive into dest_dir for manual placement
+    (never overwrites live files automatically)."""
+    import tarfile
+    from pathlib import Path
+    dest = Path(dest_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive) as tar:
+        tar.extractall(dest, filter="data")
+    return dest

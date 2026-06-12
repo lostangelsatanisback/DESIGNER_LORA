@@ -122,6 +122,56 @@ def _detect(root: Optional[Path], rel_dir: str, keywords: tuple) -> tuple:
     return ("found" if hits else "missing"), str(d), hits
 
 
+def resolve_controlnet_model(prj: Project, cn: str) -> str:
+    """Resolve a guidance module to the actual installed model filename
+    (falls back to the auto: placeholder when none is detected)."""
+    root = Path(prj.forge_root).expanduser() if prj.forge_root else None
+    _status, _path, hits = _detect(root, "models/ControlNet", (cn,))
+    return Path(hits[0]).stem if hits else f"auto:{cn}"
+
+
+def generate_region_mask(image_path, region_id: str,
+                         out_path=None):
+    """Automatic region mask (geometric baseline): professional region
+    fractions of the frame, feathered by the preset's mask blur.  Returns
+    the mask path or None (never raises; Pillow optional)."""
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+        img = Image.open(str(image_path))
+        w, h = img.size
+        preset = get_region_preset(region_id)
+        # region fractions (x0, y0, x1, y1) of the frame
+        boxes = {
+            "upper_body_torso": [(0.12, 0.20, 0.88, 0.62)],
+            "lower_body_bottomwear": [(0.15, 0.52, 0.85, 0.98)],
+            "full_body_wardrobe": [(0.08, 0.16, 0.92, 0.99)],
+            "arms_hands": [(0.0, 0.25, 0.22, 0.85),
+                           (0.78, 0.25, 1.0, 0.85)],
+            "background_environment": "inverted",
+        }[region_id]
+        mask = Image.new("L", (w, h), 0)
+        d = ImageDraw.Draw(mask)
+        if boxes == "inverted":
+            d.rectangle([0, 0, w, h], fill=255)
+            d.rectangle([int(0.18 * w), int(0.04 * h),
+                         int(0.82 * w), int(0.99 * h)], fill=0)
+        else:
+            for x0, y0, x1, y1 in boxes:
+                d.rectangle([int(x0 * w), int(y0 * h),
+                             int(x1 * w), int(y1 * h)], fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(
+            preset.default_mask_blur))
+        out = Path(out_path) if out_path else Path(
+            str(image_path)).with_suffix(".region_mask.png")
+        mask.save(out)
+        return out
+    except Exception:
+        return None
+
+
+OPTIONAL_HOOKS.setdefault("optional_region_segmenter", generate_region_mask)
+
+
 def get_region_model_requirements(prj: Project,
                                   region_id: str) -> list[dict]:
     """Requirement list for a region with local detection + placement
@@ -186,6 +236,12 @@ class WardrobeEditRequest:
     seed: int = 42
     steps: int = 0                     # 0 -> base-model profile
     cfg: float = 0.0
+    # Identity Integration Layer
+    strong_face_lock: bool = False
+    faceid_preset: str = "balanced"    # off|balanced|strong|maximum
+    reference_image_path: str = ""
+    body_structure_lock: bool = False
+    silhouette_guidance: bool = False
 
 
 EDIT_MODES = ("garment_replacement", "garment_layering", "style_variation",
@@ -241,7 +297,20 @@ def analyze_edit_readiness(prj: Project, req: WardrobeEditRequest,
                         "is not configured - the edit runs as masked "
                         "img2img over the full region framing; provide a "
                         "mask image for precise garment boundaries."))
+    from .identity_integration import (IdentityIntegrationConfig,
+                                       augment_payload)
+    id_res = augment_payload(prj, {"denoising_strength": denoise},
+                             IdentityIntegrationConfig(
+                                 strong_face_lock=req.strong_face_lock,
+                                 pose_consistency=req.preserve_pose,
+                                 region_preset=req.region_id,
+                                 reference_image_path=req.image_path))
+    notes += [f"Identity tools active: "
+              f"{', '.join(id_res.active_tools) or 'none'}"]
+    suggestions += id_res.warnings + id_res.recommendations
     return {"region": preset.label, "denoise": denoise,
+            "identity_tools": id_res.active_tools,
+            "degraded_features": id_res.degraded_features,
             "identity_preservation_score": round(score, 2),
             "identity_risk_level": risk,
             "consistency_notes": notes,
@@ -298,15 +367,28 @@ def build_wardrobe_edit_payload(prj: Project,
         payload["mask"] = base64.b64encode(mask.read_bytes()).decode()
 
     # ControlNet units (alwayson_scripts) - pose/structure consistency
-    units = []
-    for cn in preset.recommended_controlnets:
-        if cn == "openpose" and not req.preserve_pose:
-            continue
-        units.append({"module": cn if cn != "openpose" else "openpose_full",
-                      "model": f"auto:{cn}", "weight": 0.8,
-                      "guidance_start": 0.0, "guidance_end": 0.9})
-    if units:
-        payload["alwayson_scripts"] = {"controlnet": {"args": units}}
+    # Identity Integration Layer: FaceID + region-aware guidance units
+    from .identity_integration import (IdentityIntegrationConfig,
+                                       augment_payload)
+    id_weight = next((w for n, w in req.selected_loras
+                      if "character" in n.lower()
+                      or "identity" in n.lower()), None)
+    cfg_id = IdentityIntegrationConfig(
+        strong_face_lock=req.strong_face_lock,
+        faceid_enabled=req.faceid_preset != "off",
+        faceid_strength={"off": 0.0, "balanced": 0.55, "strong": 0.75,
+                         "maximum": 0.95}.get(req.faceid_preset, 0.75),
+        postprocess_face_lock=req.strong_face_lock,
+        pose_consistency=req.preserve_pose,
+        body_structure_lock=req.body_structure_lock,
+        silhouette_guidance=req.silhouette_guidance,
+        background_consistency=req.preserve_background,
+        identity_lora_weight=id_weight,
+        reference_image_path=req.reference_image_path or req.image_path,
+        region_preset=req.region_id, edit_mode=req.edit_mode)
+    result = augment_payload(prj, payload, cfg_id)
+    payload["_identity_integration"] = result.manifest_fragment[
+        "identity_integration"]
     return payload
 
 
@@ -347,6 +429,20 @@ def generate_wardrobe_edit(prj: Project, conn, req: WardrobeEditRequest,
            f"{req.edit_mode} | denoise {readiness['denoise']}")
     for s in readiness["auto_adjustment_suggestions"]:
         yield f"  ! {s}"
+    if not req.mask_path:
+        seg = OPTIONAL_HOOKS.get("optional_region_segmenter")
+        if seg:
+            out_dir0 = prj.output_path / "wardrobe_edits"
+            out_dir0.mkdir(parents=True, exist_ok=True)
+            mp = seg(req.image_path, req.region_id,
+                     out_dir0 / f"mask_{edit_id:05d}.png")
+            if mp:
+                req.mask_path = str(mp)
+                yield f"  automatic region mask -> {Path(mp).name}"
+    if req.strong_face_lock:
+        from .identity_integration import register_hooks
+        register_hooks(prj, req.reference_image_path or req.image_path)
+        yield "  Strong Face Lock armed (post-process identity refinement)"
     client = ForgeClient(forge_url)
     if not client.alive():
         yield ("Forge API not reachable - payload + manifest saved; start "
@@ -365,6 +461,12 @@ def generate_wardrobe_edit(prj: Project, conn, req: WardrobeEditRequest,
             yield "  identity post-process applied"
         except Exception as exc:                       # noqa: BLE001
             yield f"  identity post-process skipped: {exc}"
+    from .identity_integration import face_similarity
+    sim = face_similarity(fp, req.reference_image_path or req.image_path, prj)
+    if sim is not None:
+        conn.execute("UPDATE wardrobe_edits SET identity_score=? "
+                     "WHERE edit_id=?", (sim, edit_id))
+        yield f"  measured face consistency: {sim}"
     conn.execute("UPDATE wardrobe_edits SET output_path=? WHERE edit_id=?",
                  (str(fp), edit_id))
     conn.commit()

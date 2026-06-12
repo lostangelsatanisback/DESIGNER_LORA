@@ -1,4 +1,32 @@
-# LoRA Designer Studio (v3.9)
+# LoRA Designer Studio (v3.10)
+
+## Identity Integration Layer (v3.10)
+
+Centralized face consistency and body coherence
+(`lora_studio/identity_integration.py`) - one identity policy shared by
+Wardrobe Variation, img2img/inpainting payloads, and batch workflows.
+
+- **Strong Face Lock** - one toggle arms FaceID reference guidance plus the
+  InsightFace (inswapper_128.onnx) post-process identity refinement on the
+  generated result. The input image is the reference identity by default;
+  a dedicated reference image can override it. Lazy imports; the post-
+  process hook degrades to FaceID/LoRA support with a clear warning when
+  the model or runtime is absent.
+- **FaceID Guidance presets** - Off / Balanced (0.55) / Strong (0.75) /
+  Maximum (0.95); injected as an IP-Adapter FaceID Plus V2 unit into the
+  payload when detected, skipped with a readiness warning when not.
+- **Region-aware ControlNet policy** - conservative by design: full-body
+  wardrobe gets Depth (+OpenPose with pose consistency, +SoftEdge with
+  silhouette guidance); torso/bottomwear/arms add units only when toggled;
+  background edits get Depth only - FaceID/inswapper never apply to
+  background transformation. Missing units are skipped and reported.
+- **Per-payload result** - active tools, degraded features, warnings,
+  recommendations, identity preservation score, and a manifest fragment
+  (`identity_integration`) stored with every wardrobe edit's readiness
+  snapshot.
+- **UI** - Strong Face Lock, FaceID Guidance preset, body structure lock,
+  silhouette guidance toggles on the Wardrobe page; readiness shows active
+  identity tools and degraded features.
 
 ## Wardrobe Variation & Selective Region Editing (v3.9)
 

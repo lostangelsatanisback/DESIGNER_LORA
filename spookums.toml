@@ -6,14 +6,8 @@ class_word = "person"
 
 [paths]
 video_dirs = [
-    "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/complete",
-    "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/ExtraLarge",
-    "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/JAN",
-    "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/JAN_FEB",
-    "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/Large",
     "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/MDMA",
-    "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/Medium",
-    "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/Small",
+    "/Users/snoozeybnuiadmin/Library/Mobile Documents/com~apple~CloudDocs/Documents/Michelle_GooglePhotos-Dump"
 ]
 photos_dir = "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/PHOTOS"
 
@@ -27,6 +21,7 @@ anchor_dir = "/Users/snoozeybnuiadmin/DESIGNER_LORA/anchor_refs"
 base_model = "/Users/snoozeybnuiadmin/FORGE_REPO/stable-diffusion-webui-reForge/models/Stable-diffusion/cyberrealisticPony_v180Coreshift.safetensors"
 forge_root = "/Users/snoozeybnuiadmin/FORGE_REPO/stable-diffusion-webui-reForge"
 sd_scripts_dir = "/Users/snoozeybnuiadmin/sd-scripts"
+sd_scripts_python = "/Users/snoozeybnuiadmin/sd-scripts/venv/bin/python"
 
 [ui]
 port = 7861
@@ -130,4 +125,16 @@ max_total = 400
 max_per_video = 40
 min_identity = 0.40
 quota = "closeup=0.20,portrait=0.30,upper_body=0.25,full_body=0.25"
+val_fraction = 0.05
+
+[recipes.mdma_intimate_v1]
+type = "character"
+repeats = 12
+max_total = 350
+max_per_video = 50
+min_identity = 0.40
+min_sharpness = 50
+study_primary = "figure_study_candidate"
+study_min_confidence = 0.45
+quota = "full_body=0.40,upper_body=0.30,portrait=0.20,closeup=0.10"
 val_fraction = 0.05

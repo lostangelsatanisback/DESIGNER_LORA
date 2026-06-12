@@ -133,6 +133,23 @@ def send_stack_to_playground(prj: Project, name: str,
                          "least one concept layer first")
     return write_playground_preset(prj, name, loras)
 
+def diff_stack_presets(a: dict, b: dict) -> dict:
+    """Field-by-field comparison of two stack presets (any generation)."""
+    pa, _ = validate_stack_preset(a)
+    pb, _ = validate_stack_preset(b)
+    wa = {l[0]: l[1] for l in pa["handoff"]["loras"]}
+    wb = {l[0]: l[1] for l in pb["handoff"]["loras"]}
+    rows = [{"lora_id": k, "a": wa.get(k), "b": wb.get(k),
+             "delta": (round(wb[k] - wa[k], 2)
+                       if k in wa and k in wb else None)}
+            for k in sorted(set(wa) | set(wb))]
+    return {"a_name": pa["name"], "b_name": pb["name"], "rows": rows,
+            "only_in_a": sorted(set(wa) - set(wb)),
+            "only_in_b": sorted(set(wb) - set(wa)),
+            "score_a": pa.get("preservation_score"),
+            "score_b": pb.get("preservation_score")}
+
+
 # TODO(extension): per-LoRA response-curve overrides from sidecar
 # control_axes can plug into concept_control.map_slider_to_weight here once
 # axis ids are bound to sliders; preset diff view can compare two

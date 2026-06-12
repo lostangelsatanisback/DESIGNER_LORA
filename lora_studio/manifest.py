@@ -272,6 +272,10 @@ MIGRATIONS: dict[int, str] = {
             created_at TEXT
         );
     """,
+    # v11 - measured QA: face similarity on generated variations
+    11: """
+        ALTER TABLE variation_jobs ADD COLUMN measured_face_sim REAL;
+    """,
 }
 
 SCHEMA_VERSION = max(MIGRATIONS)

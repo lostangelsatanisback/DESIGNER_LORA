@@ -82,6 +82,21 @@ PRESETS: dict[str, dict] = {
                  "in the sweep: likeness-flexibility gap > 0.15 means the "
                  "study frames are overpowering identity - stop earlier.",
     },
+    "intimate_figure": {
+    "network_dim": 40,
+    "network_alpha": 20,
+    "unet_lr": 1.2e-4,
+    "te_lr": 8e-6,
+    "batch_size": 1,
+    "epochs": 12,
+    "min_snr_gamma": 5,
+    "caption_dropout_rate": 0.015,
+    "notes": "Specialized for intimate figure studies. Higher emphasis on "
+             "body proportion, form, skin detail and natural posing while "
+             "maintaining very strong identity lock. Lower caption dropout "
+             "than balanced_study. Best used with figure_study / "
+             "lingerie_fashion_study recipes.",
+    },
 }
 
 # Validation prompt set for study LoRAs (used by the eval matrix and
