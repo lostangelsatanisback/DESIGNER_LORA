@@ -1102,6 +1102,7 @@ body.compact h2{margin:4px 0}
 <div class="card" style="grid-column:1/3;max-width:760px">
   <h2>Project Configuration</h2>
   <div class="sub" id="prjpath"></div>
+  <div class="sub" id="runtimeinfo"></div>
   <label>Project name</label><input id="s_name">
   <label>Video directories (one per line)</label><textarea id="s_vdirs" rows="7"></textarea>
   <label>Photos directory</label><input id="s_pdir">
@@ -1920,6 +1921,12 @@ async function loadProject(){
   const r=await(await fetch('/api/project')).json();
   const p=r.project;
   document.getElementById('prjpath').textContent='Loaded from: '+(r.path||'(defaults - not yet saved)');
+  try{
+    const rt=await(await fetch('/api/runtime')).json();
+    document.getElementById('runtimeinfo').textContent=
+      'Runtime: '+(rt.selected_device||'?')+(rt.cuda_device?' ('+rt.cuda_device+', '+rt.cuda_vram_gb+' GB)':'')+
+      ' | dtype '+(rt.selected_dtype||'?')+(rt.tf32_enabled?' | tf32':'')+(rt.in_colab?' | colab':'');
+  }catch(e){}
   s_name.value=p.name;s_vdirs.value=p.video_dirs.join('\\n');s_pdir.value=p.photos_dir;
   s_out.value=p.output_base;s_token.value=p.trigger_token;s_cls.value=p.class_word;
   s_port.value=p.ui_port;s_anchor.value=p.anchor_dir;s_forge.value=p.forge_root;
@@ -2161,6 +2168,13 @@ class StudioHandler(BaseHTTPRequestHandler):
                 ]})
             except Exception as exc:
                 self._json({"total": 0, "frames": [], "error": str(exc)})
+
+        elif path == "/api/runtime":
+            try:
+                from ..runtime import configure_from_project
+                self._json(configure_from_project(self.project))
+            except Exception as exc:
+                self._json({"error": str(exc)})
 
         elif path == "/api/train/presets":
             try:

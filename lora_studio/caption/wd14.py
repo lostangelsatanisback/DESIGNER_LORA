@@ -116,9 +116,8 @@ def _load_tagger(repo_id: str):
         model_path = hf_hub_download(repo_id=repo_id, filename="model.onnx")
         tags_path = hf_hub_download(repo_id=repo_id, filename="selected_tags.csv")
 
-        providers = ["CPUExecutionProvider"]
-        if "CoreMLExecutionProvider" in ort.get_available_providers():
-            providers.insert(0, "CoreMLExecutionProvider")
+        from ..runtime import onnx_providers
+        providers = onnx_providers()       # CUDA -> CoreML -> CPU
         session = ort.InferenceSession(model_path, providers=providers)
         inp = session.get_inputs()[0]
         size = inp.shape[1] if isinstance(inp.shape[1], int) else 448

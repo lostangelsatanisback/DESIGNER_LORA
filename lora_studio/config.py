@@ -156,6 +156,10 @@ class Project:
     sd_scripts_python: str = ""            # python inside sd-scripts' own venv
     base_model: str = ""                   # Pony Diffusion V6 XL .safetensors path
     lora_output_dir: str = ""              # default: {output_base}/LORA_OUTPUT
+    # [runtime] section - device/precision policy (additive; absent = defaults)
+    # keys: device=auto|cuda|mps|cpu, precision=auto|float16|bfloat16|float32,
+    #       allow_tf32=true, cuda_empty_cache=true, mps_fallback=true
+    runtime: dict = field(default_factory=dict)
 
     @property
     def output_path(self) -> Path:

@@ -34,33 +34,29 @@ def diffusers_available() -> tuple[bool, str]:
 
 
 def _device():
-    import torch
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
-    if torch.cuda.is_available():
-        return "cuda"
-    return "cpu"
+    from ..runtime import get_device_name
+    return get_device_name("auto")        # cuda -> mps -> cpu
 
 
 def _mps_flush() -> None:
-    import torch
+    """Free accelerator cache (cuda OR mps) between heavy jobs."""
+    from ..runtime import clear_accelerator_cache
     gc.collect()
-    try:
-        if hasattr(torch, "mps") and torch.backends.mps.is_available():
-            torch.mps.empty_cache()
-    except Exception:
-        pass
+    clear_accelerator_cache()
 
 
 class TestPipeline:
     """SDXL txt2img / img2img / inpaint wrapper for LoRA evaluation."""
 
     def __init__(self, checkpoint: str, vae: str = "", device: str = ""):
-        import torch
+        import torch  # noqa: F401
         from diffusers import AutoPipelineForText2Image
+        from ..runtime import (apply_cuda_settings, get_recommended_dtype)
 
         self.device = device or _device()
-        self.dtype = torch.float16 if self.device != "cpu" else torch.float32
+        self.dtype = get_recommended_dtype(self.device)
+        if self.device == "cuda":
+            apply_cuda_settings(True)
         ckpt = Path(checkpoint).expanduser()
         logging.info("Loading checkpoint %s on %s", ckpt.name, self.device)
 

@@ -281,7 +281,7 @@ def apply_face_identity_postprocess(image_path, reference_image_path,
         if not model:
             return False
         if _SWAPPER["swapper"] is None:
-            _SWAPPER["app"] = FaceAnalysis(name="buffalo_l")
+            _SWAPPER["app"] = FaceAnalysis(name="buffalo_l", providers=_rt_providers())
             _SWAPPER["app"].prepare(ctx_id=0, det_size=(640, 640))
             _SWAPPER["swapper"] = insightface.model_zoo.get_model(model)
         img = cv2.imread(str(image_path))
@@ -308,7 +308,7 @@ def face_similarity(generated_path, reference_path,
         import numpy as np
         from insightface.app import FaceAnalysis
         if _SWAPPER["app"] is None:
-            _SWAPPER["app"] = FaceAnalysis(name="buffalo_l")
+            _SWAPPER["app"] = FaceAnalysis(name="buffalo_l", providers=_rt_providers())
             _SWAPPER["app"].prepare(ctx_id=0, det_size=(640, 640))
         g = _SWAPPER["app"].get(cv2.imread(str(generated_path)))
         r = _SWAPPER["app"].get(cv2.imread(str(reference_path)))
@@ -323,6 +323,11 @@ def face_similarity(generated_path, reference_path,
 def register_hooks(prj: Project, reference_image_path: str) -> None:
     """Wire the face-lock post-process into the wardrobe OPTIONAL_HOOKS."""
     from . import wardrobe
+
+
+def _rt_providers():
+    from .runtime import onnx_providers
+    return onnx_providers()
 
     def _hook(fp):
         if not apply_face_identity_postprocess(

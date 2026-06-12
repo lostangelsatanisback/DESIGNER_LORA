@@ -47,7 +47,8 @@ def _load_backend(det_size: int = 640):
             import cv2
         except Exception:
             cv2 = None
-        providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+        from ..runtime import onnx_providers
+        providers = onnx_providers()       # CUDA -> CoreML -> CPU
         app = FaceAnalysis(name="buffalo_l", providers=providers)
         app.prepare(ctx_id=0, det_size=(det_size, det_size))
         _BACKEND = (app, np, cv2)

@@ -416,6 +416,11 @@ def main(argv: Optional[list[str]] = None) -> None:
         from .curate import smart_available
         ok, reason = smart_available()
         print(f"smart curation: {'available' if ok else reason}")
+        from .runtime import configure_from_project, onnx_providers
+        info = configure_from_project(prj)
+        print("\nRuntime / accelerator:")
+        print(json.dumps(info, indent=2))
+        print(f"onnxruntime providers: {onnx_providers()}")
     elif cmd == "stats":
         base = prj.output_path
         if not (base / DB_NAME).exists():

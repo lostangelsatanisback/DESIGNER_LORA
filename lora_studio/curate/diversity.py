@@ -49,10 +49,8 @@ def clip_available() -> tuple[bool, str]:
 
 
 def _device():
-    import torch
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+    from ..runtime import get_device_name
+    return get_device_name("auto")        # cuda -> mps -> cpu
 
 
 def _load_clip():

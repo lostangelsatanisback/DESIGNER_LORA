@@ -117,7 +117,7 @@ def check_orientation(image_path):
         from insightface.app import FaceAnalysis
         from .identity_integration import _SWAPPER
         if _SWAPPER["app"] is None:
-            _SWAPPER["app"] = FaceAnalysis(name="buffalo_l")
+            _SWAPPER["app"] = FaceAnalysis(name="buffalo_l", providers=_rt_providers())
             _SWAPPER["app"].prepare(ctx_id=0, det_size=(640, 640))
         faces = _SWAPPER["app"].get(cv2.imread(str(image_path)))
         if not faces:
@@ -276,3 +276,8 @@ def fix_rotations(conn, prj, apply: bool = False,
             yield f"  {i}/{len(rows)} checked..."
     yield (f"Done: {flipped} upside-down frame(s) "
            f"{'rotated' if apply else 'found (use --apply to fix)'}")
+
+
+def _rt_providers():
+    from .runtime import onnx_providers
+    return onnx_providers()

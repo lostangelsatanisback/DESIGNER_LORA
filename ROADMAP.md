@@ -259,6 +259,12 @@ P1 Foundation ──► P2 Smart Curation ──► P3 Captioning ──► P4 C
 
 ## v4 Backlog (agreed 2026-06-12) - implement in order across sessions
 
+SHIPPED v3.20: Runtime/accelerator abstraction - lora_studio/runtime.py
+(auto->cuda->mps->cpu, dtype policy bf16/fp16/fp32, TF32, cache clear,
+onnx provider order CUDA->CoreML->CPU), [runtime] config section,
+CUDA-aware clustering/eval/curation/rotation/WD14, MPS env gating in
+kohya, doctor runtime report, Settings runtime line, Colab docs.
+
 SHIPPED v3.19: Preset Recommendation System - `suggest-preset` CLI
 (+ --json), train/preset_recommender.py (dataset-version-scoped signal
 extraction, identity-preserving explainable scoring, dynamic preset

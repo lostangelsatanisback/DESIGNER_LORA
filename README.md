@@ -510,6 +510,47 @@ lora-studio -p spookums.toml matrix --lora ~/LORA_OUTPUT/spook_final_v1.safetens
 Concat method: mixed ranks merge correctly; negative weights subtract.
 Also available in the UI **Lab** tab, next to **A/B blind compare**.
 
+## Runtime & accelerators (v3.20) - Mac/MPS + Colab/CUDA
+
+One codebase, three accelerators. `lora_studio/runtime.py` resolves the
+device everywhere: **auto -> cuda -> mps -> cpu**. Mac behavior is
+unchanged; on Colab/A100 the CLIP clustering, diffusers eval pipeline,
+InsightFace curation/rotation and WD14 tagging all pick CUDA
+automatically (onnxruntime providers: CUDA -> CoreML -> CPU).
+
+Optional `[runtime]` section in the project file (all defaults shown -
+omit the section entirely and nothing changes):
+
+```toml
+[runtime]
+device = "auto"          # auto | cuda | mps | cpu
+precision = "auto"       # auto | float16 | bfloat16 | float32
+allow_tf32 = true        # CUDA matmul TF32 (A100)
+cuda_empty_cache = true
+mps_fallback = true      # sets PYTORCH_ENABLE_MPS_FALLBACK on Mac
+```
+
+Precision policy: CUDA uses bfloat16 when the GPU supports it (A100),
+else float16; MPS stays float16; CPU stays float32. Inspect what was
+selected: `lora-studio -p spookums.toml doctor` now prints a full
+runtime report (platform, torch, CUDA device + VRAM, MPS, selected
+device/dtype, TF32, Colab detection); the Settings tab shows the same
+summary.
+
+Running on Colab:
+
+```bash
+cd /content/workspace/GROKKIE       # your clone
+python -m pip install -e .
+lora-studio -p spookums.toml doctor # verify: selected_device = cuda
+lora-studio -p spookums.toml ui     # :7861 - tunnel it (ngrok http 7861)
+```
+
+Keep datasets/outputs on Drive (`/content/drive/MyDrive/...`) or copy
+them back after runs - the VM filesystem is ephemeral. Training on
+CUDA: drop the MPS env vars (handled automatically), use
+`--mixed_precision bf16` and raise `train_batch_size` to 2-4.
+
 ## Preset Recommendation System (v3.19)
 
 `suggest-preset` analyzes a built dataset version (dataset analysis,

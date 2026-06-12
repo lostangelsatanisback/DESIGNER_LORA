@@ -160,7 +160,10 @@ def train_generator(prj: Project, cfg: TrainConfig) -> Generator[str, None, None
     run_id = cur.lastrowid
     conn.commit()
 
-    env = {**os.environ, **MPS_ENV}
+    # MPS env vars only on Apple Silicon - never pollute a CUDA/Linux run
+    from ..runtime import is_mps_available
+    env = ({**os.environ, **MPS_ENV} if is_mps_available()
+           else dict(os.environ))
     log_path = run_dir / "train.log"
     yield (f"RUN #{run_id} '{run_name}' starting\n"
            f"dataset v{cfg.dataset_version:03d} | preset {cfg.preset} "
