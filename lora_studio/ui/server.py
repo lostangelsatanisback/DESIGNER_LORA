@@ -1724,7 +1724,9 @@ class StudioHandler(BaseHTTPRequestHandler):
         elif path == "/api/concept/cards":
             try:
                 from .. import lora_explorer as lx
-                cards = lx.scan_loras(self.project)
+                cards = lx.scan_loras_cached(
+                    self.project,
+                    force=bool((query.get('rescan') or [''])[0]))
                 CC_PREVIEW_INDEX.clear()
                 for c in cards:
                     for lv, fp in c.preview_levels.items():
@@ -1794,7 +1796,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 lora_id, _, level = parts.strip("/").rpartition("/")
                 if not CC_PREVIEW_INDEX:
                     from .. import lora_explorer as lx
-                    for c in lx.scan_loras(self.project):
+                    for c in lx.scan_loras_cached(self.project):
                         for lv, fp0 in c.preview_levels.items():
                             CC_PREVIEW_INDEX[(c.lora_id, lv)] = fp0
                 fp = CC_PREVIEW_INDEX.get((lora_id, level or "default"))
@@ -2037,7 +2039,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 from .. import lora_explorer as lx
                 from ..concept_control import (ConceptSliderState,
                                                resolve_controlled_stack)
-                cards = lx.scan_loras(self.project)
+                cards = lx.scan_loras_cached(self.project)
                 sel = set(payload.get("loras") or [])
                 chosen = [c for c in cards if c.lora_id in sel]
                 state = ConceptSliderState(
@@ -2195,7 +2197,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 from .. import lora_explorer as lx
                 from ..batch_variations import (VariationGrid, expand_grid,
                                                 save_batch)
-                cards = lx.scan_loras(self.project)
+                cards = lx.scan_loras_cached(self.project)
                 sel = set(payload.get("loras") or [])
                 chosen = [c for c in cards if c.lora_id in sel]
                 grid = VariationGrid(

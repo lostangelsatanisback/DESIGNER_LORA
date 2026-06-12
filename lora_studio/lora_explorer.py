@@ -433,6 +433,33 @@ def scan_loras(prj: Project, dirs: Optional[list[Path]] = None,
     return list(cards.values())
 
 
+_SCAN_CACHE: dict = {"key": None, "ts": 0.0, "cards": []}
+
+
+def scan_loras_cached(prj: Project, max_age: float = 10.0,
+                      force: bool = False) -> list[LoraCard]:
+    """Cached scan for UI responsiveness with large libraries.
+
+    The cache key is each LoRA folder's (path, mtime, entry count), so
+    adding/removing/replacing files invalidates immediately; metadata-only
+    sidecar edits are picked up within `max_age` seconds or on force.
+    """
+    import time
+    dirs = lora_dirs(prj)
+    try:
+        key = tuple((str(d), d.stat().st_mtime, len(list(d.iterdir())))
+                    for d in dirs)
+    except OSError:
+        key = tuple(str(d) for d in dirs)
+    now = time.time()
+    if (not force and _SCAN_CACHE["key"] == key
+            and now - _SCAN_CACHE["ts"] < max_age):
+        return _SCAN_CACHE["cards"]
+    cards = scan_loras(prj, dirs=dirs)
+    _SCAN_CACHE.update(key=key, ts=now, cards=cards)
+    return cards
+
+
 def discover_loras(roots: list[str],
                    previews_root: Optional[str] = None) -> list[LoraCard]:
     """Spec-parity API: scan explicit roots without a Project."""
