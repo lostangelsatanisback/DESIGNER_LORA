@@ -162,8 +162,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p_mx.add_argument("--backend", choices=["forge", "diffusers"], default="forge")
     p_mx.add_argument("--forge-url", default="http://127.0.0.1:7860")
     p_mx.add_argument("--checkpoint", default="")
-    p_mx.add_argument("--steps", type=int, default=28)
-    p_mx.add_argument("--cfg", type=float, default=6.0)
+    p_mx.add_argument("--steps", type=int, default=0,
+                      help="0 = base-model profile default")
+    p_mx.add_argument("--cfg", type=float, default=0.0,
+                      help="0 = base-model profile default")
+    p_mx.add_argument("--sampler", default="",
+                      help="default: base-model profile sampler")
+    p_mx.add_argument("--clip-skip", type=int, default=0,
+                      help="0 = base-model profile default")
     p_mx.add_argument("--no-pony-prefix", dest="pony", action="store_false", default=True)
     p_mx.add_argument("--output", default=None)
 
@@ -221,6 +227,49 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p_mg.add_argument("--output", default=None)
 
     sub.add_parser("analyze", help="Dataset analysis + LoRA type detection")
+
+    # Concept Control Layer
+    p_cc = sub.add_parser(
+        "concept", help="Concept Control Layer: explorer scan / stack / batch")
+    cc_sub = p_cc.add_subparsers(dest="concept_cmd", required=True)
+    cc_s = cc_sub.add_parser("scan", help="Scan LoRA folders -> influence "
+                                          "profiles (manifest + sidecars)")
+    cc_s.add_argument("--write-sidecars", action="store_true",
+                      help="write .concept.json sidecars for new LoRAs")
+    cc_k = cc_sub.add_parser("stack", help="Resolve an explained LoRA stack")
+    cc_k.add_argument("--lora", action="append", default=[],
+                      metavar="ID[:WEIGHT]", help="repeatable")
+    cc_b = cc_sub.add_parser("batch", help="Expand a controlled variation "
+                                           "grid (manifest-tracked)")
+    cc_b.add_argument("--spec", required=True,
+                      help="JSON grid spec file (see docs)")
+    cc_b.add_argument("--mode", default="low_risk",
+                      choices=["low_risk", "balanced", "creative"],
+                      help="smart variation mode (caps + value ceilings)")
+    cc_b.add_argument("--run", action="store_true",
+                      help="generate via Forge if reachable")
+
+    # Study Intelligence Layer
+    p_st = sub.add_parser(
+        "study", help="Study Intelligence Layer: classify / report / "
+                      "recipes / stack / presets")
+    st_sub = p_st.add_subparsers(dest="study_cmd", required=True)
+    st_c = st_sub.add_parser("classify",
+                             help="Classify frames into study categories")
+    st_c.add_argument("--rescan", action="store_true",
+                      help="re-classify frames that already have labels")
+    st_sub.add_parser("report", help="Study classification statistics")
+    st_r = st_sub.add_parser("recipes",
+                             help="Register the 4 study dataset recipes")
+    st_r.add_argument("--apply", action="store_true",
+                      help="persist the recipes into the project file")
+    st_k = st_sub.add_parser("stack",
+                             help="Recommend a study production stack")
+    st_k.add_argument("--mode", default="character_figure_study")
+    st_p = st_sub.add_parser("presets",
+                             help="Write the study Playground preset pack")
+    st_p.add_argument("--path", default="",
+                      help="presets file (default: outputs/playground_presets.json)")
 
     p_wz = sub.add_parser("wizard", help="Creator wizard: typed build->train->eval->card")
     p_wz.add_argument("--type", dest="lora_type", default="auto",
@@ -398,6 +447,125 @@ def main(argv: Optional[list[str]] = None) -> None:
         from .maintenance import space_report
         for row in space_report(prj, prj.output_path):
             print(f"  {row['area']:<16} {str(row['files']):>8} files  {row['human']:>10}")
+    elif cmd == "concept":
+        from . import lora_explorer as lx
+        cards = lx.scan_loras(prj)
+        if args.concept_cmd == "scan":
+            try:
+                conn = manifest.connect(prj.output_path)
+                n = lx.sync_profiles_to_manifest(conn, cards)
+            except Exception as exc:                             # noqa: BLE001
+                n = len(cards)
+                print(f"(manifest unavailable - listing only: {exc})")
+            print(f"Indexed {n} LoRAs from "
+                  f"{', '.join(str(d) for d in lx.lora_dirs(prj)) or '(none)'}")
+            for c in lx.filter_cards(cards, sort="family"):
+                print(f"  {c.lora_id:<36} {c.profile.family:<12} "
+                      f"risk={c.profile.identity_risk:<6} "
+                      f"w={c.profile.weight_default}")
+            if args.write_sidecars:
+                from pathlib import Path as _P
+                for c in cards:
+                    sp = lx.sidecar_path(_P(c.path))
+                    if not sp.exists():
+                        lx.save_sidecar(_P(c.path), c.profile)
+                        print(f"  sidecar -> {sp.name}")
+        elif args.concept_cmd == "stack":
+            from .stack_intelligence import resolve_stack
+            sel, weights = [], {}
+            by_id = {c.lora_id: c for c in cards}
+            for spec in args.lora:
+                lid, _, w = spec.partition(":")
+                if lid not in by_id:
+                    print(f"  unknown LoRA id: {lid}")
+                    continue
+                sel.append(by_id[lid])
+                if w:
+                    weights[lid] = float(w)
+            st = resolve_stack(sel, weights, prj.base_model)
+            print(f"Base model: {st.base_model}")
+            if st.identity_anchor:
+                a = st.identity_anchor
+                print(f"  ANCHOR {a.lora_id:<30} {a.weight:<5} {a.reason}")
+            for i in st.concept_loras:
+                print(f"  {i.family:<12} {i.lora_id:<24} {i.weight:<5} "
+                      f"blocks {i.blocks_cli}")
+            print(f"Concept strength {st.total_concept_strength} | "
+                  f"identity preservation {st.identity_preservation_score}")
+            for w in st.warnings:
+                print(f"  [{w.severity}] {w.message}")
+        elif args.concept_cmd == "batch":
+            import json as _json
+            from pathlib import Path as _P
+            from .batch_variations import (VariationGrid, expand_grid,
+                                           run_batch_generator, save_batch)
+            spec = _json.loads(_P(args.spec).expanduser().read_text())
+            sel_ids = set(spec.pop("loras", []))
+            sel = [c for c in cards if not sel_ids or c.lora_id in sel_ids]
+            known = VariationGrid.__dataclass_fields__
+            spec.setdefault("mode", args.mode)
+            grid = VariationGrid(**{k: v for k, v in spec.items()
+                                    if k in known})
+            jobs = expand_grid(prj, sel, grid)
+            conn = manifest.connect(prj.output_path)
+            bid = save_batch(conn, prj, grid, jobs)
+            print(f"Batch {bid}: {len(jobs)} variation jobs saved.")
+            for j in jobs[:5]:
+                print(f"  {j.variation_id} seed={j.seed} "
+                      f"loras={j.loras} sliders={j.slider_state}")
+            if len(jobs) > 5:
+                print(f"  ... +{len(jobs) - 5} more")
+            if args.run:
+                for u in run_batch_generator(prj, conn, jobs):
+                    print(u)
+    elif cmd == "study":
+        from . import study as study_mod
+        if args.study_cmd == "classify":
+            from .study import StudyConfig, classify_generator
+            for update in classify_generator(
+                    prj, StudyConfig(output_base=prj.output_path,
+                                     rescan=args.rescan)):
+                print(update)
+        elif args.study_cmd == "report":
+            conn = manifest.connect(prj.output_path)
+            rep = study_mod.study_report(conn)
+            print("Study Intelligence Layer report")
+            for cat, n in sorted(rep["categories"].items()):
+                print(f"  {cat:<32} {n}")
+            print(f"  export_eligible {rep['export_eligible']} | "
+                  f"needs_review {rep['needs_review']}")
+            for k, v in rep.items():
+                if k.endswith("_mean"):
+                    print(f"  {k:<32} {v}")
+        elif args.study_cmd == "recipes":
+            added = study_mod.register_study_recipes(prj)
+            for n in study_mod.STUDY_RECIPES:
+                mark = "added" if n in added else "exists"
+                print(f"  {n:<32} [{mark}]")
+            if args.apply and added:
+                if not args.project:
+                    print("No project file (-p) - cannot persist.")
+                else:
+                    from pathlib import Path as _P
+                    from .config import save_project
+                    save_project(prj, _P(args.project))
+                    print(f"Saved to {args.project}")
+            elif added:
+                print("(dry run - use --apply to persist into the project file)")
+        elif args.study_cmd == "stack":
+            rec = study_mod.suggest_study_stack(args.mode, prj.base_model)
+            print(f"Mode: {rec['mode']}   profile: {rec['profile']}")
+            for s in rec["stack"]:
+                print(f"  {s['type']:<18} {s['role']:<9} w={s['weight']:<5} "
+                      f"blocks {s['blocks_cli']}")
+            print("Merge order:", " -> ".join(rec["merge_order"]))
+            for w in rec["warnings"]:
+                print(f"  ! {w}")
+        elif args.study_cmd == "presets":
+            from pathlib import Path as _P
+            target = study_mod.write_study_presets(
+                prj, _P(args.path) if args.path else None)
+            print(f"Study preset pack written -> {target}")
     elif cmd == "registry":
         from .registry import build_registry, best_likeness
         conn = manifest.connect(prj.output_path)
@@ -528,7 +696,8 @@ def main(argv: Optional[list[str]] = None) -> None:
             output_base=out_base(args.output), lora=args.lora, label=args.label,
             categories=cats, backend=args.backend, forge_url=args.forge_url,
             checkpoint=args.checkpoint, lora_weight=args.weight,
-            steps=args.steps, cfg=args.cfg, pony_prefix=args.pony,
+            steps=args.steps, cfg=args.cfg, sampler=args.sampler,
+            clip_skip=args.clip_skip, pony_prefix=args.pony,
         )
         for update in matrix_generator(prj, cfg):
             print(update)

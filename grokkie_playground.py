@@ -186,7 +186,7 @@ class PlaygroundPipeline:
     load_reference_image.
     """
 
-    SAMPLERS = ["default", "Euler a", "DPM++ 2M Karras", "DDIM", "UniPC"]
+    SAMPLERS = ["default", "Euler a", "DPM++ 2M Karras", "DPM++ SDE Karras", "DDIM", "UniPC"]
 
     def __init__(self, device: str = "auto") -> None:
         import torch
@@ -319,6 +319,10 @@ class PlaygroundPipeline:
             elif name == "DPM++ 2M Karras":
                 self._pipe.scheduler = DPMSolverMultistepScheduler.from_config(
                     cfgs, use_karras_sigmas=True)
+            elif name == "DPM++ SDE Karras":
+                self._pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+                    cfgs, use_karras_sigmas=True,
+                    algorithm_type="sde-dpmsolver++")
             elif name == "DDIM":
                 self._pipe.scheduler = DDIMScheduler.from_config(cfgs)
             elif name == "UniPC":
@@ -363,6 +367,11 @@ class PlaygroundPipeline:
                     guidance_scale=float(kw.get("cfg", 7.0)),
                     generator=gen,
                 )
+                cs = int(kw.get("clip_skip",
+                                2 if self.base_model == "PONY" else 0) or 0)
+                if cs > 1:
+                    common["clip_skip"] = cs - 1   # diffusers: layers to skip
+
                 if init is not None and mask is not None:
                     from diffusers import AutoPipelineForInpainting
                     pipe = AutoPipelineForInpainting.from_pipe(self._pipe)

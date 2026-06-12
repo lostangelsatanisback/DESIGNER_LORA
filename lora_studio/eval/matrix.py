@@ -82,11 +82,13 @@ class MatrixConfig:
     checkpoint: str = ""               # diffusers backend: base model path
     lora_weight: float = 0.85
     extra_loras: list[tuple[str, float]] = field(default_factory=list)
-    steps: int = 28
-    cfg: float = 6.0
+    steps: int = 0                     # 0 -> base-model profile default
+    cfg: float = 0.0                   # 0 -> base-model profile default
+    sampler: str = ""                  # "" -> base-model profile default
+    clip_skip: int = 0                 # 0 -> base-model profile default
     width: int = 1024
     height: int = 1024
-    negative: str = DEFAULT_NEGATIVE
+    negative: str = ""                 # "" -> base-model profile default
     pony_prefix: bool = True
     generate_fn: Optional[Callable] = None    # test hook: (prompt, seed) -> png bytes
 
@@ -188,6 +190,22 @@ def assemble_grid(image_paths: list[Path], out_path: Path, cols: int,
 # Backends
 # -----------------------------
 
+def _apply_profile_defaults(cfg: MatrixConfig, prj: Project) -> None:
+    """Fill unset generation fields from the base-model profile."""
+    from ..base_models import detect_profile
+    prof = detect_profile(prj.base_model)
+    if not cfg.steps:
+        cfg.steps = prof["steps"]
+    if not cfg.cfg:
+        cfg.cfg = prof["cfg"]
+    if not cfg.sampler:
+        cfg.sampler = prof["sampler"]
+    if not cfg.clip_skip:
+        cfg.clip_skip = prof["clip_skip"]
+    if not cfg.negative:
+        cfg.negative = prof["negative"] or DEFAULT_NEGATIVE
+
+
 def _make_generate_fn(cfg: MatrixConfig, prj: Project) -> Callable:
     loras = [(cfg.lora, cfg.lora_weight)] + list(cfg.extra_loras)
     if cfg.backend == "forge":
@@ -203,7 +221,8 @@ def _make_generate_fn(cfg: MatrixConfig, prj: Project) -> Callable:
             return client.txt2img(
                 prompt=prompt, negative=cfg.negative, steps=cfg.steps,
                 cfg=cfg.cfg, width=cfg.width, height=cfg.height,
-                seed=seed, loras=loras,
+                seed=seed, loras=loras, sampler=cfg.sampler,
+                clip_skip=cfg.clip_skip,
             )
         return gen
 
@@ -236,6 +255,9 @@ def _make_generate_fn(cfg: MatrixConfig, prj: Project) -> Callable:
 def matrix_generator(prj: Project, cfg: MatrixConfig) -> Generator[str, None, None]:
     setup_logging(cfg.output_base)
     conn = manifest.connect(cfg.output_base)
+    _apply_profile_defaults(cfg, prj)
+    yield (f"generation: {cfg.sampler} @ {cfg.steps} steps, CFG {cfg.cfg}, "
+           f"clip skip {cfg.clip_skip}")
 
     label = cfg.label or safe_slug(Path(cfg.lora).stem)
     out_dir = cfg.output_base / "evals" / label

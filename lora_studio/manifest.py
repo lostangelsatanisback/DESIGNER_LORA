@@ -167,6 +167,89 @@ MIGRATIONS: dict[int, str] = {
         );
         CREATE INDEX IF NOT EXISTS idx_evals_lora ON evals(lora);
     """,
+    # v7 - Study Intelligence Layer (professional study classification)
+    7: """
+        CREATE TABLE IF NOT EXISTS study_labels (
+            frame_id TEXT PRIMARY KEY,
+            study_primary TEXT,
+            study_tags TEXT,
+            study_confidence REAL,
+            study_reason_codes TEXT,
+            figure_study_score REAL,
+            fashion_study_score REAL,
+            lingerie_fashion_score REAL,
+            pose_clarity_score REAL,
+            silhouette_clarity_score REAL,
+            garment_visibility_score REAL,
+            identity_lock_score REAL,
+            study_review_status TEXT DEFAULT 'auto',
+            study_export_eligible INTEGER DEFAULT 0,
+            manual_override INTEGER DEFAULT 0,
+            classified_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_study_primary
+            ON study_labels(study_primary);
+        CREATE INDEX IF NOT EXISTS idx_study_conf
+            ON study_labels(study_confidence);
+    """,
+    # v8 - Concept Control Layer (visual LoRA explorer + controlled variation)
+    8: """
+        CREATE TABLE IF NOT EXISTS lora_influence_profiles (
+            lora_id TEXT PRIMARY KEY,
+            path TEXT,
+            family TEXT,
+            influence_tags TEXT,
+            weight_min REAL,
+            weight_max REAL,
+            weight_default REAL,
+            identity_risk TEXT,
+            known_conflicts TEXT,
+            notes TEXT,
+            preview TEXT,
+            updated_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_lip_family
+            ON lora_influence_profiles(family);
+
+        CREATE TABLE IF NOT EXISTS concept_control_presets (
+            name TEXT PRIMARY KEY,
+            kind TEXT,
+            payload TEXT,
+            updated_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS variation_batches (
+            batch_id TEXT PRIMARY KEY,
+            spec TEXT,
+            base_model TEXT,
+            job_count INTEGER,
+            created_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS variation_jobs (
+            batch_id TEXT,
+            variation_id TEXT,
+            prompt TEXT,
+            negative TEXT,
+            seed INTEGER,
+            loras TEXT,
+            slider_state TEXT,
+            warnings TEXT,
+            output_path TEXT,
+            created_at TEXT,
+            PRIMARY KEY (batch_id, variation_id)
+        );
+    """,
+    # v9 - Batch Variation Controller (modes, scoring, resumability)
+    9: """
+        ALTER TABLE variation_batches ADD COLUMN mode TEXT;
+        ALTER TABLE variation_batches ADD COLUMN source_state TEXT;
+        ALTER TABLE variation_batches ADD COLUMN identity_anchor TEXT;
+        ALTER TABLE variation_batches ADD COLUMN hard_cap INTEGER;
+        ALTER TABLE variation_jobs ADD COLUMN preservation_score REAL;
+        ALTER TABLE variation_jobs ADD COLUMN risk_level TEXT;
+        ALTER TABLE variation_jobs ADD COLUMN status TEXT DEFAULT 'planned';
+    """,
 }
 
 SCHEMA_VERSION = max(MIGRATIONS)

@@ -103,6 +103,8 @@ def build_command(prj: Project, cfg: TrainConfig, dataset_dir: Path,
         args["text_encoder_lr"] = preset["te_lr"]
     else:
         flags.append("network_train_unet_only")
+    if preset.get("caption_dropout_rate"):
+        args["caption_dropout_rate"] = preset["caption_dropout_rate"]
 
     # val_img present? sd-scripts has no native val split; noted in metadata.
     args.update(cfg.overrides or {})

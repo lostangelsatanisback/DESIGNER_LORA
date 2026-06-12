@@ -172,7 +172,10 @@ APPS: dict[str, dict] = {
               "needs_project": False, "args": ["--api"]},
 }
 
-FORGE_ROOT: Optional[str] = None     # set by main_ui from the project file
+FORGE_ROOT: Optional[str] = None
+# Visual LoRA Explorer preview index: (lora_id, level) -> verified path.
+# Preview serving goes ONLY through this index - no path traversal.
+CC_PREVIEW_INDEX: dict[tuple, str] = {}     # set by main_ui from the project file
 
 
 def _app_script(name: str) -> Optional[Path]:
@@ -381,11 +384,19 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
 .pager{display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--dim);font-size:12px}
 .filters{display:flex;gap:8px;align-items:flex-end;margin-bottom:12px}
 .filters>div{min-width:150px}
+.appdot{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);
+  padding:3px 10px;cursor:pointer;user-select:none}
+.appdot:hover{color:var(--fg)}
+.appdot .dot{width:8px;height:8px;border-radius:50%;background:#555;flex:none}
+.appdot .dot.run{background:var(--ok,#4caf50)}
+.appdot .dot.crash{background:var(--err,#f44336)}
+.appdot .dotlabel{margin-left:auto;font-size:10px}
 </style></head><body>
 <div class="nav">
   <div class="brand">LoRA <span>Studio</span></div>
   <div class="group">Generate</div>
   <div class="tab pg on" data-g="play">Playground</div>
+  <div class="tab pg" data-g="concept">Concept Control</div>
   <div class="group">Build</div>
   <div class="tab pg" data-g="factory">Dataset Factory</div>
   <div class="tab pg" data-g="wizard">Create Wizard</div>
@@ -400,6 +411,13 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
   <div class="tab pg" data-g="lab">Lab</div>
   <div class="group">&nbsp;</div>
   <div class="tab pg" data-g="settings">Settings</div>
+  <div class="group">Engines</div>
+  <div class="appdot" id="dot_forge" onclick="appStart('forge')" title="click to start">
+    <span class="dot idle"></span>Forge <span class="dotlabel">...</span></div>
+  <div class="appdot" id="dot_play" onclick="appStart('playground')" title="click to start">
+    <span class="dot idle"></span>Playground <span class="dotlabel">...</span></div>
+  <div class="appdot" id="dot_factory" onclick="appStart('factory')" title="click to start">
+    <span class="dot idle"></span>Factory <span class="dotlabel">...</span></div>
 </div>
 <div style="margin-bottom:6px"><h1>LoRA <span>Designer Studio</span></h1></div>
 <div class="sub">__PNAME__ &middot; local &middot; non-destructive &middot; resumable &middot; manifest-tracked</div>
@@ -421,6 +439,80 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
 </div>
 
 <!-- ============ FACTORY (embedded) ============ -->
+<div class="page" id="page-concept">
+<h2>Concept Control</h2>
+<div class="sub">Visual LoRA Explorer &middot; attribute controls &middot; stack intelligence &middot; controlled variation</div>
+<div class="filters">
+  <div><label>Search</label><input id="cc_search" oninput="loadConceptCards()"></div>
+  <div><label>Concept family</label>
+    <select id="cc_family" onchange="loadConceptCards()">
+      <option value="">any</option><option>identity</option><option>character</option>
+      <option>wardrobe</option><option>fashion</option><option>lighting</option>
+      <option>pose</option><option>style</option><option>texture</option>
+      <option>detail</option><option>environment</option><option>composition</option>
+      <option>camera</option><option>refinement</option>
+    </select></div>
+  <div><label>Influence tag</label>
+    <select id="cc_tag" onchange="loadConceptCards()">
+      <option value="">any</option><option>identity_anchor</option><option>silhouette</option>
+      <option>garment_style</option><option>fabric_texture</option><option>lighting_mood</option>
+      <option>pose_energy</option><option>facial_consistency</option><option>anatomy_balance</option>
+      <option>color_palette</option><option>scene_context</option><option>detail_density</option>
+      <option>composition_flow</option><option>camera_perspective</option>
+    </select></div>
+  <div><label>Sort</label>
+    <select id="cc_sort" onchange="loadConceptCards()">
+      <option value="name">name</option><option value="modified">modified</option>
+      <option value="family">family</option><option value="identity_risk">identity risk</option>
+    </select></div>
+  <div><label>Preview</label>
+    <select id="cc_preview" onchange="loadConceptCards()">
+      <option value="">any</option><option value="has">has preview</option>
+      <option value="missing">missing preview</option>
+    </select></div>
+  <div style="align-self:flex-end"><button class="mini" onclick="loadConceptCards(true)">Rescan folders</button></div>
+</div>
+<div id="cc_cards" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+<h3 style="margin-top:18px">Attribute Controls</h3>
+<div id="cc_sliders" style="max-width:640px"></div>
+<h3 style="margin-top:14px">Resolved Stack</h3>
+<div style="display:flex;gap:8px;margin-bottom:8px">
+  <button onclick="ccResolve()">Resolve stack</button>
+  <button class="mini" onclick="ccSend()">Send to Playground</button>
+  <button class="mini" onclick="ccSavePreset()">Save stack preset</button>
+  <button class="mini" onclick="ccLoadPresets()">Saved presets</button>
+  <button class="mini" id="cc_balance_btn" style="display:none"
+    onclick="ccApplyBalance()">Apply Suggested Balance</button>
+  <button class="mini" id="cc_clearpins_btn" style="display:none"
+    onclick="ccOverrides={};ccResolve()">Clear manual weights</button>
+</div>
+<div id="cc_stack" style="font-size:12px"></div>
+<div id="cc_warnings" style="font-size:12px;margin-top:6px"></div>
+<div id="cc_presets" style="font-size:12px;margin-top:6px"></div>
+<h3 style="margin-top:18px">Batch Variations</h3>
+<div class="filters">
+  <div><label>Variation mode</label>
+    <select id="cc_bv_mode" onchange="ccPreviewGrid()">
+      <option value="low_risk">Low-Risk Studio Sweep (cap 24)</option>
+      <option value="balanced">Balanced Exploration (cap 64)</option>
+      <option value="creative">Creative Exploration (cap 128)</option>
+    </select></div>
+  <div><label>Axis 1</label><select id="cc_bv_slider" onchange="ccPreviewGrid()"></select></div>
+  <div><label>Values (csv or min:max:step)</label>
+    <input id="cc_bv_values" value="0.2,0.4,0.6" oninput="ccPreviewGrid()"></div>
+  <div><label>Axis 2 (optional)</label><select id="cc_bv_slider2" onchange="ccPreviewGrid()"></select></div>
+  <div><label>Axis 2 values</label><input id="cc_bv_values2" oninput="ccPreviewGrid()"></div>
+  <div><label>Seeds (csv)</label><input id="cc_bv_seeds" value="42" oninput="ccPreviewGrid()"></div>
+</div>
+<div class="filters">
+  <div style="flex:1"><label>Composition goal / style descriptors</label>
+    <input id="cc_bv_tail" placeholder="full body framing, soft studio lighting"></div>
+  <div style="align-self:flex-end"><span id="cc_bv_estimate" style="font-size:11px;color:var(--dim);margin-right:8px"></span>
+    <button class="mini" onclick="ccBatch()">Create Variation Grid</button></div>
+</div>
+<div id="cc_batch" style="font-size:12px"></div>
+</div>
+
 <div class="page" id="page-factory">
   <div class="topbar">
     <h2 style="margin:0">Grokkie Dataset Factory</h2>
@@ -649,6 +741,26 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
     <select id="fframing" onchange="pg=0;loadFrames()">
       <option value="">any</option><option>closeup</option><option>portrait</option>
       <option>upper_body</option><option>full_body</option><option>none</option>
+    </select></div>
+  <div><label>Study</label>
+    <select id="fstudy" onchange="pg=0;loadFrames()">
+      <option value="">any</option>
+      <option value="figure_study_candidate">Figure Study Candidates</option>
+      <option value="fashion_study_candidate">Fashion Study Candidates</option>
+      <option value="lingerie_fashion_candidate">Lingerie/Fashion Study</option>
+      <option value="form_proportion_candidate">Form &amp; Proportion</option>
+      <option value="needs_review">Needs Study Review</option>
+      <option value="export_eligible">Export Eligible</option>
+      <option value="identity_strong">Strong Identity Lock</option>
+      <option value="pose_strong">Strong Pose Clarity</option>
+    </select></div>
+  <div><label>Sort</label>
+    <select id="fsort" onchange="pg=0;loadFrames()">
+      <option value="">path</option>
+      <option value="study_confidence">study confidence</option>
+      <option value="identity_lock">identity lock</option>
+      <option value="figure_study">figure-study score</option>
+      <option value="fashion_study">fashion-study score</option>
     </select></div>
   <div style="flex:1;color:var(--dim);font-size:11px;align-self:center">
     Click a card to toggle keep (green) / reject (red). Verdicts are manual overrides, stored in the manifest.</div>
@@ -908,7 +1020,217 @@ document.querySelectorAll('.tab.pg').forEach(t=>t.onclick=()=>{
   if(t.dataset.g==='train'){loadRuns();loadTrainDatasets();}
   if(t.dataset.g==='test'){loadEvals();appPoll();}
   if(t.dataset.g==='play'||t.dataset.g==='factory')appPoll();
+  if(t.dataset.g==='concept'){loadConceptSliders();loadConceptCards();}
 });
+
+// ============ Concept Control ============
+let ccSel={};        // lora_id -> weight (selected stack)
+let ccOverrides={};  // lora_id -> pinned manual weight (Apply Balance / numeric edit)
+let ccLastStack=null;
+let ccCards=[];
+async function loadConceptCards(rescan){
+  const q=`family=${v('cc_family')||''}&tag=${v('cc_tag')||''}&search=${encodeURIComponent(v('cc_search')||'')}`+
+    `&sort=${v('cc_sort')||'name'}&preview=${v('cc_preview')||''}${rescan?'&rescan=1':''}`+
+    `&output=${encodeURIComponent(v('outbase')||'')}`;
+  const r=await(await fetch('/api/concept/cards?'+q)).json();
+  ccCards=r.items||r.cards||[];
+  document.getElementById('cc_cards').innerHTML=ccCards.map(c=>{
+    const sel=ccSel[c.lora_id]!=null;
+    const risk=c.profile.identity_risk;
+    const rcol=risk==='high'?'var(--err)':risk==='medium'?'var(--warn)':'var(--ok,#4caf50)';
+    const purl=(c.preview_urls||{}).default;
+    const img=purl?`<img id="ccimg_${c.lora_id}" src="${purl}" style="width:100%;height:90px;object-fit:cover;border-radius:4px">`:
+      `<div style="height:90px;background:#11161f;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--dim)">`+
+      `<div>${c.profile.family}</div><div style="font-size:9px">no preview</div></div>`;
+    const levels=(c.preview_levels_available||[]).length>1?
+      `<div style="font-size:9px;margin-top:2px">`+(c.preview_levels_available||[]).map(lv=>
+        `<a style="cursor:pointer;color:var(--acc,#4af);margin-right:5px" `+
+        `onclick="event.stopPropagation();document.getElementById('ccimg_${c.lora_id}').src='${c.preview_urls[lv]}'">${lv}</a>`).join('')+`</div>`:'';
+    return `<div style="width:170px;border:1px solid ${sel?'var(--acc,#4af)':'#2a3142'};border-radius:6px;padding:6px;cursor:pointer" `+
+      `onclick="ccToggle('${c.lora_id}')" title="${(c.description||c.profile.notes||'').replace(/"/g,'&quot;')}">${img}${levels}`+
+      `<div style="font-size:11px;margin-top:4px;word-break:break-all"><b>${c.display_name||c.lora_id}</b></div>`+
+      `<div style="font-size:10px;color:var(--dim)">${c.profile.family} &middot; <span style="color:${rcol}">${risk} risk</span>`+
+      ` &middot; w ${c.profile.weight_default}</div>`+
+      `<div style="font-size:9px;color:var(--dim)">${(c.profile.influence_tags||[]).join(' ')}</div>`+
+      ((c.concept_meta&&((c.concept_meta.control_axes||[]).length||(c.concept_meta.known_conflicts||[]).length||c.concept_meta.priority_hint!=='normal'))?
+        `<div style="font-size:9px;color:var(--dim)">`+
+        ((c.concept_meta.control_axes||[]).length?`${c.concept_meta.control_axes.length} control axe(s) `:'')+
+        (c.concept_meta.priority_hint!=='normal'?`&middot; ${c.concept_meta.priority_hint} `:'')+
+        ((c.concept_meta.known_conflicts||[]).length?`&middot; ${c.concept_meta.known_conflicts.length} known conflict(s)`:'')+`</div>`:'')+
+      `<button class="mini" style="margin-top:4px;width:100%" `+
+      `onclick="event.stopPropagation();ccAddToStack('${c.lora_id}')">${sel?'In stack &#10003;':'Add to stack'}</button></div>`;
+  }).join('')||'<span style="color:var(--dim)">No LoRAs found - check lora_output_dir / forge_root, then Rescan.</span>';
+}
+async function ccAddToStack(id){
+  if(ccSel[id]==null){const c=ccCards.find(x=>x.lora_id===id);ccSel[id]=c?c.profile.weight_default:0.3;}
+  await fetch('/api/playground/stack/add-lora',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({lora_id:id})});
+  loadConceptCards();ccResolve();
+}
+function ccToggle(id){
+  if(ccSel[id]!=null)delete ccSel[id];
+  else{const c=ccCards.find(x=>x.lora_id===id);ccSel[id]=c?c.profile.weight_default:0.3;}
+  loadConceptCards();ccResolve();
+}
+async function loadConceptSliders(){
+  const r=await(await fetch('/api/concept/sliders')).json();
+  try{
+    const ax=await(await fetch('/api/concept/variation/axes')).json();
+    const opts=ax.axes.map(a=>`<option value="${a.slider}">${a.label} (${a.identity_impact})</option>`).join('');
+    document.getElementById('cc_bv_slider').innerHTML=opts;
+    document.getElementById('cc_bv_slider2').innerHTML='<option value="">none</option>'+opts;
+  }catch(e){}
+  document.getElementById('cc_sliders').innerHTML=r.sliders.map(s=>
+    `<div style="display:flex;gap:8px;align-items:center;margin:3px 0" title="${s.explanation}${s.identity_note?' | '+s.identity_note:''}">`+
+    `<span style="width:200px;font-size:12px">${s.label}</span>`+
+    `<input type="range" min="${s.minimum}" max="${s.maximum}" step="${s.step}" value="${s.default}" `+
+    `id="ccs_${s.slider_id}" style="flex:1" oninput="document.getElementById('ccn_${s.slider_id}').value=this.value">`+
+    `<input id="ccn_${s.slider_id}" value="${s.default}" style="width:54px" `+
+    `onchange="document.getElementById('ccs_${s.slider_id}').value=this.value"></div>`).join('');
+}
+function ccState(){
+  const st={};
+  document.querySelectorAll('[id^=ccs_]').forEach(e=>{st[e.id.slice(4)]=parseFloat(e.value);});
+  return st;
+}
+function ccRiskColor(l){return l==='high'?'var(--err)':l==='elevated'?'var(--warn)':l==='watch'?'#d4b106':'var(--ok,#4caf50)';}
+function ccSevColor(s){return s==='critical'?'var(--err)':s==='caution'?'var(--warn)':s==='advisory'?'#d4b106':'var(--dim)';}
+function ccEditWeight(id,cur){
+  const w=prompt('Manual weight for '+id+' (pinned - the resolver will warn but not adjust it):',cur);
+  if(w===null)return;
+  const f=parseFloat(w);
+  if(isNaN(f)){alert('Enter a number.');return;}
+  ccOverrides[id]=f;ccResolve();
+}
+async function ccResolve(){
+  if(!Object.keys(ccSel).length){document.getElementById('cc_stack').innerHTML='<span style="color:var(--dim)">Select LoRAs above.</span>';
+    document.getElementById('cc_warnings').innerHTML='';return null;}
+  const r=await(await fetch('/api/concept/resolve',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({loras:Object.keys(ccSel),slider_state:ccState(),weights:ccOverrides,output:v('outbase')||''})})).json();
+  if(r.error){alert(r.error);return null;}
+  ccLastStack=r;
+  const row=i=>{
+    const adj=i.adjusted?` <span title="auto-adjusted for stack balance" style="color:var(--warn)">&#9881;</span>`:'';
+    const pin=i.pinned?` <span title="pinned manual weight" style="color:var(--acc,#4af)">&#128204;</span>`:'';
+    const req=(i.requested_weight!=null&&i.requested_weight!==i.weight)?
+      `<span style="color:var(--dim);text-decoration:line-through">${i.requested_weight}</span> &rarr; `:'';
+    return `<tr><td>${i.family}</td><td>${i.lora_id}${pin}</td>`+
+      `<td style="cursor:pointer" title="click to set a manual weight" `+
+      `onclick="ccEditWeight('${i.lora_id}',${i.weight})">${req}<b>${i.weight}</b>${adj}</td>`+
+      `<td style="color:var(--dim)">${i.reason}</td></tr>`;
+  };
+  const rows=[];
+  if(r.identity_anchor)rows.push(row(r.identity_anchor));
+  r.concept_loras.forEach(i=>rows.push(row(i)));
+  const badge=`<span style="background:${ccRiskColor(r.risk_level)};color:#000;border-radius:10px;`+
+    `padding:1px 10px;font-size:11px;font-weight:bold">${r.risk_level.toUpperCase()}</span>`;
+  document.getElementById('cc_stack').innerHTML=
+    `<div style="margin-bottom:6px">${badge} <b>${r.summary||''}</b></div>`+
+    `<table><tr><th>family</th><th>LoRA</th><th>requested &rarr; resolved</th><th>reason</th></tr>${rows.join('')}</table>`+
+    `<div style="margin-top:4px">concept strength <b>${r.total_concept_strength}</b> &middot; `+
+    `identity preservation <b style="color:${ccRiskColor(r.risk_level)}">${r.identity_preservation_score}</b>`+
+    ((r.influence_pressure||[]).length?` &middot; top pressure: <b>${r.influence_pressure[0].lora_id}</b> (${r.influence_pressure[0].pressure})`:'')+`</div>`;
+  document.getElementById('cc_warnings').innerHTML=
+    (r.warnings||[]).map(w=>`<div style="color:${ccSevColor(w.severity)}">[${w.severity}] ${w.message}</div>`).join('')+
+    ((r.recommendations||[]).length?`<div style="margin-top:6px;border-top:1px solid #2a3142;padding-top:4px">`+
+      `<b>Recommendations</b>`+r.recommendations.map(rc=>`<div style="color:var(--dim)">&bull; ${rc.message}</div>`).join('')+`</div>`:'');
+  const hasRec=(r.recommendations||[]).some(rc=>Object.keys(rc.proposed_weights||{}).length);
+  document.getElementById('cc_balance_btn').style.display=hasRec?'':'none';
+  document.getElementById('cc_clearpins_btn').style.display=Object.keys(ccOverrides).length?'':'none';
+  return r;
+}
+function ccApplyBalance(){
+  if(!ccLastStack||!ccLastStack.recommended_weights)return;
+  ccOverrides={...ccLastStack.recommended_weights};
+  ccResolve();
+}
+async function ccSend(){
+  const r=await ccResolve();if(!r)return;
+  const name=prompt('Playground preset name:','concept_stack');if(!name)return;
+  const res=await(await fetch('/api/concept/send_playground',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:name,stack:r,output:v('outbase')||''})})).json();
+  alert(res.ok?('Preset written: '+res.path+' - Playground > Presets > Refresh > Load'):(res.error||'failed'));
+}
+async function ccSavePreset(){
+  const r=await ccResolve();if(!r)return;
+  const name=prompt('Stack preset name:','my_stack');if(!name)return;
+  const res=await(await fetch('/api/concept/preset_save',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:name,kind:'lora_stack',payload:{sel:ccSel,slider_state:ccState(),stack:r},output:v('outbase')||''})})).json();
+  if(!res.ok)alert(res.error||'failed');else ccLoadPresets();
+}
+async function ccLoadPresets(){
+  const r=await(await fetch(`/api/concept/presets?output=${encodeURIComponent(v('outbase')||'')}`)).json();
+  document.getElementById('cc_presets').innerHTML=(r.presets||[]).map(p=>
+    `<div><b>${p.name}</b> <span style="color:var(--dim)">[${p.kind}] ${p.updated_at||''}</span> `+
+    `<button class="mini" onclick='ccApplyPreset(${JSON.stringify(p.payload)})'>Load</button></div>`).join('')||
+    '<span style="color:var(--dim)">No saved presets.</span>';
+}
+function ccApplyPreset(payload){
+  ccSel=payload.sel||{};
+  const st=payload.slider_state||{};
+  for(const k in st){const s=document.getElementById('ccs_'+k),n=document.getElementById('ccn_'+k);
+    if(s){s.value=st[k];}if(n){n.value=st[k];}}
+  loadConceptCards();ccResolve();
+}
+function ccAxisSpec(slId,valId){
+  const sl=v(slId);if(!sl)return null;
+  const raw=(v(valId)||'').trim();if(!raw)return null;
+  if(raw.includes(':')){
+    const p=raw.split(':').map(parseFloat);
+    if(p.length>=2&&!isNaN(p[0])&&!isNaN(p[1]))
+      return {slider:sl,minimum:p[0],maximum:p[1],step:(p.length>2&&!isNaN(p[2]))?p[2]:0.1};
+    return null;
+  }
+  const vals=raw.split(',').map(parseFloat).filter(x=>!isNaN(x));
+  return vals.length?{slider:sl,values:vals}:null;
+}
+function ccGridSpec(){
+  const axes=[ccAxisSpec('cc_bv_slider','cc_bv_values'),
+              ccAxisSpec('cc_bv_slider2','cc_bv_values2')].filter(a=>a);
+  const seeds=(v('cc_bv_seeds')||'42').split(',').map(x=>parseInt(x)).filter(x=>!isNaN(x));
+  return {slider_axes:axes,seeds:seeds.length?seeds:[42],mode:v('cc_bv_mode')||'low_risk'};
+}
+async function ccPreviewGrid(){
+  const g=ccGridSpec();
+  if(!g.slider_axes.length){document.getElementById('cc_bv_estimate').textContent='';return;}
+  const r=await(await fetch('/api/concept/variation/preview',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(g)})).json();
+  if(r.error)return;
+  document.getElementById('cc_bv_estimate').innerHTML=
+    `${r.estimated} planned job(s), cap ${r.cap}`+
+    (r.within_cap?'':` <span style="color:var(--err)">- ${r.guidance}</span>`);
+}
+function ccRiskBadge(l){
+  const col=l==='blocked_or_needs_review'?'var(--err)':l==='high_risk'?'var(--err)':
+    l==='caution'?'var(--warn)':'var(--ok,#4caf50)';
+  return `<span style="color:${col}">${l}</span>`;
+}
+async function ccBatch(){
+  if(!Object.keys(ccSel).length){alert('Select LoRAs first.');return;}
+  const g=ccGridSpec();
+  if(!g.slider_axes.length){alert('Define at least one variation axis.');return;}
+  const r=await(await fetch('/api/concept/batch_expand',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({loras:Object.keys(ccSel),base_state:ccState(),weights:ccOverrides,
+      slider_axes:g.slider_axes,seeds:g.seeds,mode:g.mode,
+      prompt_tail:v('cc_bv_tail')||'',output:v('outbase')||''})})).json();
+  if(r.error){alert(r.error);return;}
+  document.getElementById('cc_batch').innerHTML=
+    `<div>Batch <b>${r.batch_id}</b> [${g.mode}]: ${r.jobs.length} variation job(s) saved to the manifest. `+
+    `<button class="mini" onclick="ccGenerate('${r.batch_id}')">Generate Variations</button></div>`+
+    `<table><tr><th>id</th><th>seed</th><th>slider state</th><th>stack</th><th>preservation</th><th>risk</th><th>warnings</th></tr>`+
+    r.jobs.map(j=>`<tr><td>${j.variation_id}</td><td>${j.seed}</td>`+
+      `<td>${JSON.stringify(j.slider_state)}</td><td>${j.loras.map(l=>l[0]+':'+l[1]).join(' ')}</td>`+
+      `<td>${j.preservation_score!=null?j.preservation_score:'-'}</td>`+
+      `<td>${ccRiskBadge(j.risk_level||'info')}</td>`+
+      `<td style="color:var(--warn)">${(j.warnings||[]).join('; ')}</td></tr>`).join('')+'</table>'+
+    `<div style="color:var(--dim)">Generation needs Forge running (Engines strip). CLI: lora-studio concept batch --spec ... --mode ${g.mode} --run</div>`;
+}
+async function ccGenerate(bid){
+  const r=await(await fetch('/api/concept/variation/generate',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({batch_id:bid,output:v('outbase')||''})})).json();
+  alert(r.ok?('Queued as hub job #'+r.job_id+' - watch the Pipeline page; results land in variation_batches/.'):(r.error||'failed'));
+}
+
 async function appPoll(){
   try{
     const s=await(await fetch('/api/apps')).json();
@@ -933,11 +1255,18 @@ async function appPoll(){
         if(!st.running&&fr.src!=='about:blank')fr.src='about:blank';
       }
     }
+    for(const name of ['playground','factory','forge']){
+      const st=s[name];
+      const d=document.getElementById('dot_'+(name==='playground'?'play':name));
+      if(!d)continue;
+      const dot=d.querySelector('.dot'),lbl=d.querySelector('.dotlabel');
+      if(!st||!st.script_found){dot.className='dot';lbl.textContent='n/a';continue;}
+      dot.className='dot '+(st.running?'run':(st.crashed?'crash':''));
+      lbl.textContent=st.running?(':'+st.port):(st.crashed?'crashed':'off');
+    }
   }catch(e){}
-  if(document.getElementById('page-play').classList.contains('on')||
-     document.getElementById('page-factory').classList.contains('on')||
-     document.getElementById('page-test').classList.contains('on'))
-    setTimeout(appPoll,3000);
+  clearTimeout(window._appPollT);
+  window._appPollT=setTimeout(appPoll,3000);
 }
 async function appStart(name){
   const r=await(await fetch('/api/apps/start',{method:'POST',
@@ -1145,8 +1474,8 @@ async function bulkVerdict(action){
   loadFrames();
 }
 async function loadFrames(){
-  const st=v('fstatus'), fr=v('fframing');
-  const r=await(await fetch(`/api/frames?status=${st}&framing=${fr}&offset=${pg*60}&limit=60&output=${encodeURIComponent(v('outbase')||'')}`)).json();
+  const st=v('fstatus'), fr=v('fframing'), sd=v('fstudy')||'', so=v('fsort')||'';
+  const r=await(await fetch(`/api/frames?status=${st}&framing=${fr}&study=${sd}&sort=${so}&offset=${pg*60}&limit=60&output=${encodeURIComponent(v('outbase')||'')}`)).json();
   shownFrameIds=(r.frames||[]).map(f=>f.id);
   document.getElementById('pinfo').textContent=`${pg*60+1}-${Math.min((pg+1)*60,r.total)} of ${r.total}`;
   document.getElementById('frames').innerHTML=r.frames.map(f=>{
@@ -1156,12 +1485,32 @@ async function loadFrames(){
     let fra=f.framing?`<span class="tag">${f.framing}</span>`:'';
     let cap=f.caption?`<br><span style="color:#6f7b92">${f.caption.slice(0,70)}</span>`:'';
     let capesc=(f.caption||'').replace(/"/g,'&quot;');
-    return `<div class="fcard ${cls}" title="${capesc}" onclick="verdict('${f.id}',this)">${fra}`+
+    let studyShort={figure_study_candidate:'figure study',fashion_study_candidate:'fashion study',
+      lingerie_fashion_candidate:'lingerie/fashion',form_proportion_candidate:'form+proportion',
+      rejected_study:'study: rejected'}[f.study]||'';
+    let studyChip=studyShort?`<span class="tag" style="top:24px;background:#1a3a5caa" `+
+      `title="confidence ${f.study_conf!=null?f.study_conf.toFixed(2):'-'} | review ${f.study_review||'-'}`+
+      `${f.study_export?' | export eligible':''}\\nreasons: ${(f.study_reasons||'').replace(/"/g,'')}">`+
+      `${studyShort}${f.study_review==='needs_review'?' ?':''}</span>`:'';
+    return `<div class="fcard ${cls}" title="${capesc}" onclick="verdict('${f.id}',this)">${fra}${studyChip}`+
       `<button class="mini" style="position:absolute;top:5px;right:5px;background:#000a;color:#fff" `+
       `onclick="event.stopPropagation();editCaption('${f.id}',this)" data-cap="${capesc}">&#9998;</button>`+
+      `<button class="mini" style="position:absolute;top:28px;right:5px;background:#000a;color:#fff" `+
+      `title="set study label" onclick="event.stopPropagation();editStudy('${f.id}')">S</button>`+
       `<img loading="lazy" src="/thumb/${f.id}"><div class="fi">${f.name}<br>`+
       `sharp ${f.sharpness==null?'-':f.sharpness.toFixed(0)}${sim}${cl}${cap}</div></div>`;
   }).join('');
+}
+async function editStudy(id){
+  const lbl=prompt('Study label:\\n1 figure_study_candidate\\n2 fashion_study_candidate\\n'+
+    '3 lingerie_fashion_candidate\\n4 form_proportion_candidate\\n5 rejected_study\\n\\nEnter 1-5:');
+  if(lbl===null)return;
+  const map={'1':'figure_study_candidate','2':'fashion_study_candidate',
+    '3':'lingerie_fashion_candidate','4':'form_proportion_candidate','5':'rejected_study'};
+  const label=map[lbl.trim()]||lbl.trim();
+  const r=await(await fetch('/api/study_override',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({frame_id:id,study_primary:label,output:v('outbase')||''})})).json();
+  if(r.ok)loadFrames(); else alert(r.error||'invalid label');
 }
 async function editCaption(id,btn){
   const cur=btn.dataset.cap||'';
@@ -1314,6 +1663,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 out_base = self._out_base(query)
                 status = (query.get("status") or ["selected"])[0]
                 framing = (query.get("framing") or [""])[0]
+                study = (query.get("study") or [""])[0]
+                sort = (query.get("sort") or [""])[0]
                 offset = int((query.get("offset") or ["0"])[0])
                 limit = min(200, int((query.get("limit") or ["60"])[0]))
                 conn = manifest.connect(out_base)
@@ -1322,18 +1673,40 @@ class StudioHandler(BaseHTTPRequestHandler):
                 if framing:
                     where += " AND d.framing = ?"
                     params.append(framing)
+                # Study Intelligence Layer filters (LEFT JOIN: old manifests
+                # simply return no study rows - never crashes)
+                if study in ("figure_study_candidate", "fashion_study_candidate",
+                             "lingerie_fashion_candidate",
+                             "form_proportion_candidate"):
+                    where += " AND s.study_primary = ?"
+                    params.append(study)
+                elif study == "needs_review":
+                    where += " AND s.study_review_status = 'needs_review'"
+                elif study == "export_eligible":
+                    where += " AND s.study_export_eligible = 1"
+                elif study == "identity_strong":
+                    where += " AND s.identity_lock_score >= 0.7"
+                elif study == "pose_strong":
+                    where += " AND s.pose_clarity_score >= 0.7"
+                order = {"study_confidence": "s.study_confidence DESC",
+                         "identity_lock": "s.identity_lock_score DESC",
+                         "figure_study": "s.figure_study_score DESC",
+                         "fashion_study": "s.fashion_study_score DESC",
+                         }.get(sort, "f.path")
+                joins = ("LEFT JOIN detections d ON d.frame_id=f.frame_id "
+                         "LEFT JOIN study_labels s ON s.frame_id=f.frame_id ")
                 total = conn.execute(
-                    f"SELECT COUNT(*) FROM frames f "
-                    f"LEFT JOIN detections d ON d.frame_id=f.frame_id WHERE {where}",
+                    f"SELECT COUNT(*) FROM frames f {joins}WHERE {where}",
                     params,
                 ).fetchone()[0]
                 rows = conn.execute(
                     f"SELECT f.frame_id, f.path, f.sharpness, f.brightness, f.status, "
-                    f"d.framing, d.identity_sim, f.cluster_id, c.caption_text "
-                    f"FROM frames f "
-                    f"LEFT JOIN detections d ON d.frame_id=f.frame_id "
+                    f"d.framing, d.identity_sim, f.cluster_id, c.caption_text, "
+                    f"s.study_primary, s.study_confidence, s.study_reason_codes, "
+                    f"s.study_review_status, s.study_export_eligible "
+                    f"FROM frames f {joins}"
                     f"LEFT JOIN captions c ON c.frame_id=f.frame_id "
-                    f"WHERE {where} ORDER BY f.path LIMIT ? OFFSET ?",
+                    f"WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?",
                     params + [limit, offset],
                 ).fetchall()
                 conn.close()
@@ -1341,10 +1714,102 @@ class StudioHandler(BaseHTTPRequestHandler):
                     {"id": r[0], "path": r[1], "name": Path(r[1]).name,
                      "sharpness": r[2], "brightness": r[3], "status": r[4],
                      "framing": r[5], "identity_sim": r[6], "cluster_id": r[7],
-                     "caption": r[8]} for r in rows
+                     "caption": r[8], "study": r[9], "study_conf": r[10],
+                     "study_reasons": r[11], "study_review": r[12],
+                     "study_export": r[13]} for r in rows
                 ]})
             except Exception as exc:
                 self._json({"total": 0, "frames": [], "error": str(exc)})
+
+        elif path == "/api/concept/cards":
+            try:
+                from .. import lora_explorer as lx
+                cards = lx.scan_loras(self.project)
+                CC_PREVIEW_INDEX.clear()
+                for c in cards:
+                    for lv, fp in c.preview_levels.items():
+                        CC_PREVIEW_INDEX[(c.lora_id, lv)] = fp
+                if (query.get("rescan") or [""])[0]:
+                    conn = manifest.connect(self._out_base(query))
+                    lx.sync_profiles_to_manifest(conn, cards)
+                    conn.close()
+                out = lx.filter_cards(
+                    cards,
+                    family=(query.get("family") or [""])[0],
+                    tag=(query.get("tag") or [""])[0],
+                    search=(query.get("search") or [""])[0],
+                    sort=(query.get("sort") or ["name"])[0])
+                pv = (query.get("preview") or [""])[0]
+                if pv == "has":
+                    out = [c for c in out if c.has_preview]
+                elif pv == "missing":
+                    out = [c for c in out if not c.has_preview]
+                payload_out = lx.build_explorer_payload(out)
+                payload_out["cards"] = payload_out["items"]   # legacy alias
+                payload_out["roots"] = [str(d)
+                                        for d in lx.lora_dirs(self.project)]
+                self._json(payload_out)
+            except Exception as exc:
+                self._json({"cards": [], "items": [], "error": str(exc)})
+
+        elif path == "/api/concept/variation/axes":
+            from ..concept_control import variation_axes
+            from ..batch_variations import VARIATION_MODES
+            self._json({"axes": variation_axes(),
+                        "modes": {k: {"label": v["label"], "cap": v["cap"],
+                                      "notes": v["notes"]}
+                                  for k, v in VARIATION_MODES.items()}})
+
+        elif path.startswith("/api/concept/variation/batch/"):
+            try:
+                from ..batch_variations import load_batch
+                bid = path.rsplit("/", 1)[1]
+                conn = manifest.connect(self._out_base(query))
+                data = load_batch(conn, bid)
+                conn.close()
+                self._json(data or {"error": f"unknown batch {bid}"})
+            except Exception as exc:
+                self._json({"error": str(exc)})
+
+        elif path == "/api/concept/sliders":
+            from ..concept_control import slider_specs
+            self._json({"sliders": slider_specs()})
+
+        elif path == "/api/concept/presets":
+            try:
+                from ..concept_control import load_presets
+                conn = manifest.connect(self._out_base(query))
+                presets = load_presets(conn)
+                conn.close()
+                self._json({"presets": presets})
+            except Exception as exc:
+                self._json({"presets": [], "error": str(exc)})
+
+        elif path.startswith("/api/concept/lora_preview/"):
+            # served ONLY from the explorer index (no path traversal):
+            # /api/concept/lora_preview/<lora_id>/<level>
+            data = b""
+            try:
+                parts = path.split("/api/concept/lora_preview/", 1)[1]
+                lora_id, _, level = parts.strip("/").rpartition("/")
+                if not CC_PREVIEW_INDEX:
+                    from .. import lora_explorer as lx
+                    for c in lx.scan_loras(self.project):
+                        for lv, fp0 in c.preview_levels.items():
+                            CC_PREVIEW_INDEX[(c.lora_id, lv)] = fp0
+                fp = CC_PREVIEW_INDEX.get((lora_id, level or "default"))
+                if fp and Path(fp).exists():
+                    data = Path(fp).read_bytes()
+            except Exception:
+                data = b""
+            if data:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self.send_error(404)
 
         elif path.startswith("/thumb/"):
             frame_id = path.split("/thumb/", 1)[1].strip("/")
@@ -1567,6 +2032,216 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._json(stop_app(str(payload.get("app", ""))))
         elif path == "/api/cancel":
             self._json({"ok": QUEUE.cancel(int(payload.get("id", 0)))})
+        elif path == "/api/concept/resolve":
+            try:
+                from .. import lora_explorer as lx
+                from ..concept_control import (ConceptSliderState,
+                                               resolve_controlled_stack)
+                cards = lx.scan_loras(self.project)
+                sel = set(payload.get("loras") or [])
+                chosen = [c for c in cards if c.lora_id in sel]
+                state = ConceptSliderState(
+                    values=payload.get("slider_state") or {})
+                overrides = {k: float(v) for k, v in
+                             (payload.get("weights") or {}).items()}
+                stack = resolve_controlled_stack(
+                    chosen, state, self.project.base_model,
+                    overrides=overrides or None,
+                    pinned=set(payload.get("pinned") or overrides))
+                self._json(stack.to_json())
+            except Exception as exc:
+                self._json({"error": str(exc)})
+
+        elif path == "/api/concept/send_playground":
+            try:
+                from ..pipeline_dag import write_playground_preset
+                st = payload.get("stack") or {}
+                loras = []
+                if st.get("identity_anchor"):
+                    a = st["identity_anchor"]
+                    loras.append((a["lora_id"], a["weight"]))
+                loras += [(i["lora_id"], i["weight"])
+                          for i in st.get("concept_loras", [])]
+                if not loras:
+                    self._json({"ok": False, "error": "empty stack"})
+                    return
+                target = write_playground_preset(
+                    self.project, str(payload.get("name") or "concept_stack"),
+                    loras)
+                self._json({"ok": True, "path": str(target)})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)})
+
+        elif path == "/api/playground/stack/add-lora":
+            try:
+                from .. import lora_explorer as lx
+                from ..pipeline_dag import write_playground_preset
+                import json as _json
+                lora_id = str(payload.get("lora_id") or "")
+                cards = {c.lora_id: c for c in lx.scan_loras(self.project)}
+                if lora_id not in cards:
+                    self._json({"ok": False, "error": "unknown LoRA id"})
+                    return
+                c = cards[lora_id]
+                w = float(payload.get("weight")
+                          or c.profile.weight_default)
+                # merge into the persistent explorer stack preset
+                target = (Path(__file__).resolve().parents[2] / "outputs"
+                          / "playground_presets.json")
+                current: list = []
+                try:
+                    existing = _json.loads(target.read_text())
+                    current = list(existing.get("explorer_stack", {})
+                                   .get("loras", []))
+                except Exception:
+                    pass
+                current = [it for it in current if it[0] != lora_id]
+                entry = [lora_id, round(w, 2)]
+                # identity LoRA priority: anchors stay first in the stack
+                if c.profile.family in ("identity", "character"):
+                    current.insert(0, entry)
+                else:
+                    current.append(entry)
+                write_playground_preset(
+                    self.project, "explorer_stack",
+                    [(n, wt) for n, wt in current])
+                self._json({"ok": True, "stack": current,
+                            "entry": {"name": lora_id, "path": c.path,
+                                      "weight": round(w, 2),
+                                      "source": "visual_explorer",
+                                      "concept_tags":
+                                          c.profile.influence_tags}})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)})
+
+        elif path == "/api/concept/preset_save":
+            try:
+                from ..concept_control import save_preset
+                conn = manifest.connect(Path(
+                    str(payload.get("output")
+                        or getattr(self.server, "output_base",
+                                   self.project.output_base))).expanduser())
+                save_preset(conn, str(payload.get("name") or "preset"),
+                            str(payload.get("kind") or "lora_stack"),
+                            payload.get("payload") or {})
+                conn.close()
+                self._json({"ok": True})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)})
+
+        elif path == "/api/concept/variation/preview":
+            try:
+                from ..batch_variations import (estimate_job_count,
+                                                parse_axes)
+                axes = parse_axes(payload.get("slider_axes") or [])
+                est = estimate_job_count(
+                    axes, [int(s) for s in (payload.get("seeds") or [42])],
+                    str(payload.get("mode") or "low_risk"))
+                est["axis_values"] = {a.slider: a.resolve_values(est["mode"])
+                                      for a in axes}
+                self._json(est)
+            except Exception as exc:
+                self._json({"error": str(exc)})
+
+        elif path == "/api/concept/variation/generate":
+            try:
+                from ..batch_variations import load_batch
+                bid = str(payload.get("batch_id") or "")
+                out_base = Path(
+                    str(payload.get("output")
+                        or getattr(self.server, "output_base",
+                                   self.project.output_base))).expanduser()
+                conn0 = manifest.connect(out_base)
+                data = load_batch(conn0, bid)
+                conn0.close()
+                if not data:
+                    self._json({"ok": False, "error": f"unknown batch {bid}"})
+                    return
+                prj = self.project
+
+                def factory():
+                    from ..batch_variations import (VariationJob,
+                                                    run_batch_generator)
+                    conn = manifest.connect(out_base)
+                    jobs = [VariationJob(
+                        batch_id=bid, variation_id=j["variation_id"],
+                        prompt=j.get("prompt", ""),
+                        negative=j.get("negative", ""),
+                        seed=j["seed"], loras=j["loras"],
+                        slider_state=j["slider_state"],
+                        warnings=j["warnings"], payload={},
+                        output_path=j.get("output_path") or "")
+                        for j in data["jobs"]]
+                    # rebuild payloads deterministically from stored rows
+                    from ..base_models import detect_profile
+                    from ..eval.forge_api import ForgeClient
+                    prof = detect_profile(prj.base_model)
+                    for j in jobs:
+                        j.payload = ForgeClient.build_txt2img_payload(
+                            prompt=j.prompt, negative=j.negative,
+                            steps=prof["steps"], cfg=prof["cfg"],
+                            width=prof["width"], height=prof["height"],
+                            seed=j.seed, sampler=prof["sampler"],
+                            clip_skip=prof["clip_skip"],
+                            loras=[(n, w) for n, w in j.loras])
+                    return run_batch_generator(prj, conn, jobs)
+                job_id = QUEUE.submit(f"variation_batch {bid}", factory)
+                self._json({"ok": True, "job_id": job_id})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)})
+
+        elif path == "/api/concept/batch_expand":
+            try:
+                from .. import lora_explorer as lx
+                from ..batch_variations import (VariationGrid, expand_grid,
+                                                save_batch)
+                cards = lx.scan_loras(self.project)
+                sel = set(payload.get("loras") or [])
+                chosen = [c for c in cards if c.lora_id in sel]
+                grid = VariationGrid(
+                    prompt_tail=str(payload.get("prompt_tail") or ""),
+                    seeds=[int(s) for s in (payload.get("seeds") or [42])],
+                    slider_axes=payload.get("slider_axes") or [],
+                    base_state=payload.get("base_state") or {},
+                    mode=str(payload.get("mode") or "low_risk"),
+                    overrides={k: float(v) for k, v in
+                               (payload.get("weights") or {}).items()})
+                jobs = expand_grid(self.project, chosen, grid)
+                conn = manifest.connect(Path(
+                    str(payload.get("output")
+                        or getattr(self.server, "output_base",
+                                   self.project.output_base))).expanduser())
+                bid = save_batch(conn, self.project, grid, jobs)
+                conn.close()
+                from dataclasses import asdict
+                self._json({"batch_id": bid,
+                            "jobs": [{k: v for k, v in asdict(j).items()
+                                      if k != "payload"} for j in jobs]})
+            except Exception as exc:
+                self._json({"error": str(exc)})
+
+        elif path == "/api/study_override":
+            try:
+                out_base = Path(
+                    str(payload.get("output")
+                        or getattr(self.server, "output_base", self.project.output_base))
+                ).expanduser()
+                fid = payload.get("frame_id") or ""
+                label = payload.get("study_primary") or ""
+                allowed = {"figure_study_candidate", "fashion_study_candidate",
+                           "lingerie_fashion_candidate",
+                           "form_proportion_candidate", "rejected_study"}
+                if not fid or label not in allowed:
+                    self._json({"ok": False, "error": "invalid label"})
+                    return
+                from ..study import set_manual_label
+                conn = manifest.connect(out_base)
+                set_manual_label(conn, fid, label)
+                conn.close()
+                self._json({"ok": True})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)})
+
         elif path == "/api/verdict_bulk":
             try:
                 out_base = Path(

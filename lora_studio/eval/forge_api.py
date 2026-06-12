@@ -51,7 +51,7 @@ class ForgeClient:
                               height: int = 1024, seed: int = 42,
                               sampler: str = "DPM++ 2M Karras",
                               loras: Optional[list[tuple[str, float]]] = None,
-                              hires: bool = False) -> dict:
+                              hires: bool = False, clip_skip: int = 0) -> dict:
         payload = {
             "prompt": ForgeClient.lora_prompt(prompt, loras or []),
             "negative_prompt": negative,
@@ -59,6 +59,10 @@ class ForgeClient:
             "width": int(width), "height": int(height),
             "seed": int(seed), "sampler_name": sampler,
         }
+        if int(clip_skip) > 1:
+            payload["override_settings"] = {
+                "CLIP_stop_at_last_layers": int(clip_skip)}
+            payload["override_settings_restore_afterwards"] = True
         if hires:
             payload.update(enable_hr=True, hr_scale=1.5,
                            hr_upscaler="Latent", denoising_strength=0.45)

@@ -198,16 +198,14 @@ def write_playground_preset(prj: Project, name: str,
         presets = json.loads(target.read_text())
     except Exception:
         pass
-    presets[name] = {
-        "checkpoint": None,
-        "prompt": f"score_9, score_8_up, {prj.trigger_token} {prj.class_word}, ",
-        "negative": ("lowres, bad anatomy, bad hands, deformed, blurry, "
-                     "watermark, worst quality"),
-        "sampler": "DPM++ 2M Karras", "steps": 30, "cfg": 7.0,
-        "width": 1024, "height": 1024,
-        "loras": [[n, round(float(w), 2)] for n, w in loras],
-        "_studio": {"shipped_at": now_iso()},
-    }
+    from .base_models import detect_profile, preset_payload, sample_prompts
+    prof = detect_profile(prj.base_model)
+    trig = f"{prj.trigger_token} {prj.class_word}".strip()
+    body = preset_payload(prof, trig, base_model=prj.base_model, loras=loras)
+    body["_studio"] = {"shipped_at": now_iso(), "profile": prof["label"],
+                       "trigger": trig,
+                       "sample_prompts": sample_prompts(prof, trig)}
+    presets[name] = body
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(presets, indent=2))
     return target

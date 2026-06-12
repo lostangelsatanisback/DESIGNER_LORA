@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Generator, Optional
 
 from . import manifest
+from .base_models import PROFILES, blocks_string, detect_profile
 from .config import Project
 from .util import now_iso, safe_slug, setup_logging
 
@@ -182,42 +183,50 @@ def detect_type(a: dict) -> list[dict]:
     return sorted(out, key=lambda d: -d["score"])
 
 
-def suggest_stack(ranking: list[dict], analysis: dict) -> dict:
-    """From type scores -> a recommended multi-LoRA production stack.
+def suggest_stack(ranking: list[dict], analysis: dict,
+                  base_model: Optional[str] = None) -> dict:
+    """From type scores -> a recommended multi-LoRA production stack,
+    block-weighted for the project's base model profile.
 
-    Returns {"stack": [{type, role, train_weight, merge_blocks}], "rationale": [...]}.
+    Returns {"stack": [{type, role, weight, blocks, blocks_cli}],
+             "rationale": [...], "profile": <label>, "merge_name": ...}.
     The primary LoRA is the top-scoring type; complementary LoRAs are added
     when their signals are strong enough to be worth a separate training run.
     """
+    prof = detect_profile(base_model) if base_model else PROFILES["pony_v6"]
+    bw, ww = prof["blocks"], prof["weights"]
+
+    def entry(lora_type: str, role: str) -> dict:
+        blocks = dict(bw[role])
+        return {"type": lora_type, "role": role, "weight": ww[role],
+                "blocks": blocks, "blocks_cli": blocks_string(blocks)}
+
     scores = {r["type"]: r["score"] for r in ranking}
     fm = analysis.get("framing_mix", {})
     stack: list[dict] = []
     why: list[str] = []
 
     primary = ranking[0]["type"]
-    stack.append({"type": primary, "role": "primary", "weight": 0.85,
-                  "blocks": {"te": 1.0, "down": 1.0, "mid": 1.0, "up": 1.0}})
+    stack.append(entry(primary, "primary"))
     why.append(f"primary = {primary} ({ranking[0]['reason']})")
+    why.append(f"block weights tuned for {prof['label']}")
 
     if primary in ("character", "explicit"):
         if scores.get("style", 0) >= 0.45:
-            stack.append({"type": "style", "role": "flavor", "weight": 0.4,
-                          "blocks": {"te": 0.0, "down": 0.3, "mid": 0.5, "up": 1.0}})
-            why.append("style signal strong enough for a surface-only flavor LoRA")
+            stack.append(entry("style", "flavor"))
+            why.append("style signal strong enough for a surface-only flavor "
+                       "LoRA (low down/mid keeps the base's rendering intact)")
         if scores.get("outfit", 0) >= 0.50 and analysis.get("clusters", 0) >= 3:
-            stack.append({"type": "outfit", "role": "wardrobe", "weight": 0.6,
-                          "blocks": {"te": 0.0, "down": 1.0, "mid": 1.0, "up": 1.0}})
+            stack.append(entry("outfit", "wardrobe"))
             why.append("distinct outfit clusters detected - separate wardrobe LoRA")
         if fm.get("closeup", 0) >= 0.30 and (analysis.get("sharpness_mean") or 0) >= 60:
-            stack.append({"type": "detail", "role": "refiner", "weight": 0.5,
-                          "blocks": {"te": 0.0, "down": 0.2, "mid": 0.4, "up": 1.0}})
+            stack.append(entry("detail", "refiner"))
             why.append("enough sharp closeups for a detail refiner")
     elif primary == "style" and scores.get("character", 0) >= 0.5:
-        stack.append({"type": "character", "role": "identity", "weight": 0.8,
-                      "blocks": {"te": 1.0, "down": 1.0, "mid": 1.0, "up": 1.0}})
+        stack.append(entry("character", "identity"))
         why.append("identity signal present - pair the style with a character LoRA")
 
-    return {"stack": stack, "rationale": why,
+    return {"stack": stack, "rationale": why, "profile": prof["label"],
             "merge_name": f"{primary}_pack_v1"}
 
 

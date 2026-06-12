@@ -152,11 +152,14 @@ def step_analyze(sess: FactorySession) -> tuple[str, str]:
 def step_plan(sess: FactorySession) -> str:
     if not sess.ranking:
         return "Run Analyze first."
-    sess.plan = suggest_stack(sess.ranking, sess.analysis)
-    lines = ["### Recommended production stack\n",
+    sess.plan = suggest_stack(sess.ranking, sess.analysis,
+                              base_model=sess.prj.base_model)
+    lines = [f"### Recommended production stack — "
+             f"{sess.plan.get('profile', 'default profile')}\n",
              "| LoRA | role | playground weight | merge blocks |", "|---|---|---|---|"]
     for s in sess.plan["stack"]:
-        lines.append(f"| {s['type']} | {s['role']} | {s['weight']} | {s['blocks']} |")
+        lines.append(f"| {s['type']} | {s['role']} | {s['weight']} | "
+                     f"`{s.get('blocks_cli', s['blocks'])}` |")
     lines.append("\n**Why:** " + " · ".join(sess.plan["rationale"]))
     lines.append(f"\nMerged pack name: `{sess.plan['merge_name']}`")
     return "\n".join(lines)
@@ -295,6 +298,23 @@ def step_merge(sess: FactorySession, name: str):
         yield transcript + f"\n\n[factory] merged pack ready: {merged}"
 
 
+
+def _guard(gen):
+    """Stream a step generator; surface any exception as readable output
+    instead of silently killing the stream (session state is preserved)."""
+    import traceback
+    buf = ""
+    try:
+        for upd in gen:
+            buf = upd
+            yield upd
+    except Exception:                                            # noqa: BLE001
+        yield (buf + "\n\n========== STEP FAILED ==========\n"
+               + traceback.format_exc()
+               + "\nFix the issue and re-run this step - progress so far "
+                 "is saved in the manifest.")
+
+
 def step_ship(sess: FactorySession, preset_name: str,
               presets_path: str = "") -> str:
     """Write a Grokkie Playground preset pre-loading the production stack."""
@@ -324,34 +344,18 @@ def step_ship(sess: FactorySession, preset_name: str,
         except Exception:                                       # noqa: BLE001
             pass
 
-    # derive the playground's checkpoint dropdown label from base_model
-    checkpoint_label = None
-    if sess.prj.base_model:
-        stem = Path(sess.prj.base_model).stem
-        n = stem.lower()
-        btype = ("PONY" if "pony" in n else "FLUX" if "flux" in n
-                 else "SDXL" if ("xl" in n or "sdxl" in n) else "SD15")
-        checkpoint_label = f"{stem}  [{btype}]"
-
+    # complete, base-model-tuned preset (sampler/steps/cfg/clip-skip/prompts)
+    from lora_studio.base_models import (detect_profile, preset_payload,
+                                         sample_prompts)
+    prof = detect_profile(sess.prj.base_model)
     trig = f"{sess.prj.trigger_token} {sess.prj.class_word}".strip()
-    preset = {
-        "checkpoint": checkpoint_label,
-        "prompt": f"score_9, score_8_up, {trig}, ",
-        "negative": ("lowres, bad anatomy, bad hands, deformed, blurry, "
-                     "watermark, worst quality"),
-        "sampler": "DPM++ 2M Karras", "steps": 30, "cfg": 7.0,
-        "width": 1024, "height": 1024,
-        "loras": [[n, round(float(w), 2)] for n, w in stack],
-        "_factory": {"project": sess.project_path, "shipped_at": time.time(),
-                     "best_epochs": sess.best_epochs, "trigger": trig,
-                     "sample_prompts": [
-                         f"score_9, score_8_up, {trig}, studio portrait, "
-                         "soft lighting, photorealistic",
-                         f"score_9, score_8_up, {trig}, full body, casual "
-                         "outfit, outdoor park, golden hour",
-                         f"score_9, score_8_up, {trig}, close-up, detailed "
-                         "skin, natural light",
-                     ]},
+    preset = preset_payload(prof, trig, base_model=sess.prj.base_model,
+                            loras=stack)
+    preset["_factory"] = {
+        "project": sess.project_path, "shipped_at": time.time(),
+        "best_epochs": sess.best_epochs, "trigger": trig,
+        "profile": prof["label"],
+        "sample_prompts": sample_prompts(prof, trig),
     }
     presets = {}
     try:
@@ -363,8 +367,11 @@ def step_ship(sess: FactorySession, preset_name: str,
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(presets, indent=2))
     return (f"Shipped preset '{pname}' -> {target}\n"
+            f"Profile: {prof['label']}  |  {preset['sampler']} @ "
+            f"{preset['steps']} steps, CFG {preset['cfg']}, "
+            f"clip skip {preset['clip_skip']}\n"
             f"Stack: {preset['loras']}\n"
-            "Open Grokkie Playground -> Presets -> Load. "
+            "Open Grokkie Playground -> Presets -> Refresh -> Load. "
             "(LoRA files must be visible in the playground's LoRA folders.)")
 
 
@@ -389,19 +396,29 @@ def build_ui(project_path: Optional[str]):
             b1 = gr.Button("Ingest library", variant="primary")
             o1 = gr.Textbox(lines=18, label="Progress")
             def h_ingest(d):
-                yield from step_ingest(sess, d)
+                yield from _guard(step_ingest(sess, d))
             b1.click(h_ingest, inputs=dry, outputs=o1)
 
         with gr.Tab("2 · Analyze"):
             b2 = gr.Button("Analyze dataset", variant="primary")
             dash = gr.Markdown()
             tdet = gr.Markdown()
-            b2.click(lambda: step_analyze(sess), outputs=[dash, tdet])
+            def h_analyze():
+                try:
+                    return step_analyze(sess)
+                except Exception as exc:                         # noqa: BLE001
+                    return f"**Analyze failed:** `{exc}`", ""
+            b2.click(h_analyze, outputs=[dash, tdet])
 
         with gr.Tab("3 · Stack Plan"):
             b3 = gr.Button("Suggest production stack", variant="primary")
             plan_md = gr.Markdown()
-            b3.click(lambda: step_plan(sess), outputs=plan_md)
+            def h_plan():
+                try:
+                    return step_plan(sess)
+                except Exception as exc:                         # noqa: BLE001
+                    return f"**Stack plan failed:** `{exc}`"
+            b3.click(h_plan, outputs=plan_md)
 
         with gr.Tab("4 · Curate & Caption"):
             c_smart = gr.Checkbox(True, label="Identity filtering ([ai])")
@@ -410,7 +427,7 @@ def build_ui(project_path: Optional[str]):
             b4 = gr.Button("Run curation chain", variant="primary")
             o4 = gr.Textbox(lines=18, label="Progress")
             def h_curate(s, cl, cp):
-                yield from step_curate(sess, s, cl, cp)
+                yield from _guard(step_curate(sess, s, cl, cp))
             b4.click(h_curate, inputs=[c_smart, c_clust, c_capt], outputs=o4)
             gr.Markdown("Review/override frames and captions in the LoRA Studio "
                         "UI (`lora-studio ui`) - same manifest, live.")
@@ -428,7 +445,7 @@ def build_ui(project_path: Optional[str]):
             b5 = gr.Button("Build versioned dataset", variant="primary")
             o5 = gr.Textbox(lines=16, label="Progress")
             def h_build(t, rp, mx, q, vf, sc):
-                yield from step_build(sess, t, rp, mx, q, vf, sc)
+                yield from _guard(step_build(sess, t, rp, mx, q, vf, sc))
             b5.click(h_build,
                      inputs=[r_type, r_rep, r_max, r_quota, r_val, r_crop],
                      outputs=o5)
@@ -441,7 +458,7 @@ def build_ui(project_path: Optional[str]):
             b6 = gr.Button("Train + sweep", variant="primary")
             o6 = gr.Textbox(lines=18, label="Progress")
             def h_train(t, s, b):
-                yield from step_train_sweep(sess, t, s, b)
+                yield from _guard(step_train_sweep(sess, t, s, b))
             b6.click(h_train, inputs=[t_type, t_sweep, t_backend], outputs=o6)
 
         with gr.Tab("7 · Merge & Ship"):
@@ -450,7 +467,7 @@ def build_ui(project_path: Optional[str]):
                             variant="primary")
             o7 = gr.Textbox(lines=12, label="Merge progress")
             def h_merge(n):
-                yield from step_merge(sess, n)
+                yield from _guard(step_merge(sess, n))
             b7a.click(h_merge, inputs=m_name, outputs=o7)
             gr.Markdown("---")
             s_name = gr.Textbox(label="Playground preset name")
@@ -458,8 +475,12 @@ def build_ui(project_path: Optional[str]):
                                 label="Playground presets file")
             b7b = gr.Button("Send to Grokkie Playground", variant="primary")
             o7b = gr.Markdown()
-            b7b.click(lambda n, p: step_ship(sess, n, p),
-                      inputs=[s_name, s_path], outputs=o7b)
+            def h_ship(n, p):
+                try:
+                    return step_ship(sess, n, p)
+                except Exception as exc:                         # noqa: BLE001
+                    return f"**Ship failed:** `{exc}`"
+            b7b.click(h_ship, inputs=[s_name, s_path], outputs=o7b)
     return demo
 
 

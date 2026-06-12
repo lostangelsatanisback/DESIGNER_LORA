@@ -58,7 +58,9 @@ def test_poi_from_bbox():
 # ---------- presets ----------
 
 def test_presets_cover_roadmap_table():
-    assert set(PRESETS) == {"character", "style", "outfit", "pose", "detail"}
+    assert {"character", "style", "outfit", "pose", "detail"} <= set(PRESETS)
+    # Study Intelligence Layer preset family
+    assert {"figure_study", "fashion_editorial", "balanced_study"} <= set(PRESETS)
     c = PRESETS["character"]
     assert (c["network_dim"], c["network_alpha"]) == (32, 16)
     assert c["unet_lr"] == 1e-4 and c["te_lr"] == 5e-5

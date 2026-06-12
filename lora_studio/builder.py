@@ -59,6 +59,10 @@ RECIPE_DEFAULTS = {
     "caption_static": "",
     "smart_crop": False,       # subject-centered crop to SDXL buckets
     "bucket_base": 1024,       # 1024 standard, 768 for lighter runs
+    # Study Intelligence Layer filters (v7) - blank/0 = inactive
+    "study_primary": "",       # e.g. figure_study_candidate
+    "study_min_confidence": 0.0,
+    "study_export_only": False,  # require study_export_eligible = 1
 }
 
 
@@ -102,9 +106,12 @@ def select_for_recipe(conn, rcp: dict) -> list:
     caption) after filters + quota/diversity selection. Deterministic."""
     rows = conn.execute(
         "SELECT f.frame_id, f.source_id, f.path, f.sharpness, f.cluster_id, "
-        "d.framing, c.caption_text, d.identity_sim, d.bbox FROM frames f "
+        "d.framing, c.caption_text, d.identity_sim, d.bbox, "
+        "s.study_primary, s.study_confidence, s.study_export_eligible "
+        "FROM frames f "
         "LEFT JOIN detections d ON d.frame_id = f.frame_id "
         "LEFT JOIN captions c ON c.frame_id = f.frame_id "
+        "LEFT JOIN study_labels s ON s.frame_id = f.frame_id "
         "WHERE f.status IN ('selected','packaged') "
         "ORDER BY f.frame_id"
     ).fetchall()
@@ -115,9 +122,21 @@ def select_for_recipe(conn, rcp: dict) -> list:
     min_id = float(rcp["min_identity"] or 0)
     min_sharp = float(rcp["min_sharpness"] or 0)
 
+    study_primary = str(rcp.get("study_primary") or "")
+    study_min_conf = float(rcp.get("study_min_confidence") or 0)
+    study_export_only = bool(rcp.get("study_export_only"))
+
     filtered = []
     for r in rows:
-        frame_id, sid, path, sharp, cluster, framing, caption, ident, _bbox = r
+        (frame_id, sid, path, sharp, cluster, framing, caption, ident, _bbox,
+         s_primary, s_conf, s_export) = r
+        r = r[:9]   # downstream selection logic uses the original 9 columns
+        if study_primary and (s_primary or "") != study_primary:
+            continue
+        if study_min_conf > 0 and (s_conf is None or s_conf < study_min_conf):
+            continue
+        if study_export_only and not s_export:
+            continue
         if framing_allow and (framing or "none") not in framing_allow:
             continue
         cstr = str(cluster) if cluster is not None else ""

@@ -367,4 +367,14 @@ def load_project(path: Optional[str]) -> Project:
     else:
         raise ValueError(f"Unsupported project file type: {p.suffix}")
     known = {f for f in Project.__dataclass_fields__}
-    return Project(**{k: v for k, v in data.items() if k in known})
+    # Tolerate organizational section headers ([project], [paths], ...):
+    # flatten unknown one-level sections so their keys still map to fields.
+    flat: dict = {}
+    for k, v in data.items():
+        if k in known:
+            flat[k] = v
+        elif isinstance(v, dict):
+            for k2, v2 in v.items():
+                if k2 in known and k2 not in flat:
+                    flat[k2] = v2
+    return Project(**flat)

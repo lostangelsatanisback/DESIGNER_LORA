@@ -1,5 +1,10 @@
 name = "SPOOKUMS_STUDIO"
 
+[project]
+trigger_token = "spookums"
+class_word = "person"
+
+[paths]
 video_dirs = [
     "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/complete",
     "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/ExtraLarge",
@@ -11,12 +16,118 @@ video_dirs = [
     "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/VIDEOS/Small",
 ]
 photos_dir = "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL MEDIA/PHOTOS"
+
 output_base = "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/EXTRACTED_FRAMES"
-trigger_token = "spookums"
-class_word = "person"
-anchor_dir = "anchor_dir = "/Users/snoozeybnuiadmin/DESIGNER_LORA/anchor_refs""
+extracted_frames_dir = "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/EXTRACTED_FRAMES"
+final_dataset_dir = "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/FINAL_DATASETS"
+lora_output_dir = "/Volumes/CURATOR_SSD/SPOOKUMS_PROJECT/LORA_OUTPUT"
+
+anchor_dir = "/Users/snoozeybnuiadmin/DESIGNER_LORA/anchor_refs"
+
+base_model = "/Users/snoozeybnuiadmin/FORGE_REPO/stable-diffusion-webui-reForge/models/Stable-diffusion/cyberrealisticPony_v180Coreshift.safetensors"
 forge_root = "/Users/snoozeybnuiadmin/FORGE_REPO/stable-diffusion-webui-reForge"
-ui_port = 7861
-sd_scripts_dir = "~/sd-scripts"
-base_model = "/Users/snoozeybnuiadmin/FORGE_REPO/stable-diffusion-webui-reForge/models/Stable-diffusion/ponyDiffusionV6XL_v6StartWithThisOne.safetensors"
-lora_output_dir = ""
+sd_scripts_dir = "/Users/snoozeybnuiadmin/sd-scripts"
+
+[ui]
+port = 7861
+
+[playground]
+default_base_model = "/Users/snoozeybnuiadmin/FORGE_REPO/stable-diffusion-webui-reForge/models/Stable-diffusion/cyberrealisticPony_v180Coreshift.safetensors"
+
+# Optional but recommended for CyberRealistic Pony
+[defaults]
+sampler = "DPM++ SDE Karras"
+steps = 35
+cfg_scale = 5
+clip_skip = 2
+resolution = "896x1152"
+# ---------------------------------------------------------------
+# Dataset recipes - build with  lora-studio build --recipe NAME
+# ---------------------------------------------------------------
+
+[recipes.character_v1]
+type = "character"
+repeats = 10
+max_total = 400
+max_per_video = 40
+quota = "closeup=0.30,portrait=0.30,upper_body=0.25,full_body=0.15"
+val_fraction = 0.05
+
+[recipes.style_v1]
+type = "style"
+repeats = 4
+max_total = 600
+max_per_video = 20
+quota = ""
+val_fraction = 0.05
+
+[recipes.outfit_v1]
+type = "outfit"
+repeats = 8
+max_total = 150
+framing = "upper_body,full_body"
+val_fraction = 0.05
+
+[recipes.pose_v1]
+type = "pose"
+repeats = 6
+max_total = 200
+framing = "full_body"
+val_fraction = 0.05
+
+[recipes.detail_v1]
+type = "detail"
+repeats = 12
+max_total = 120
+framing = "closeup"
+min_sharpness = 80
+smart_crop = true
+val_fraction = 0.0
+
+# --------------- Study Intelligence Layer recipes ---------------
+
+[recipes.figure_study_v1]
+type = "character"
+repeats = 8
+max_total = 300
+max_per_video = 30
+min_identity = 0.40
+min_sharpness = 50
+quota = "full_body=0.40,upper_body=0.30,portrait=0.20,closeup=0.10"
+val_fraction = 0.05
+study_primary = "figure_study_candidate"
+study_min_confidence = 0.45
+
+[recipes.fashion_editorial_v1]
+type = "outfit"
+repeats = 8
+max_total = 250
+max_per_video = 25
+min_identity = 0.35
+min_sharpness = 50
+quota = "full_body=0.35,upper_body=0.30,closeup=0.20,portrait=0.15"
+val_fraction = 0.05
+study_primary = "fashion_study_candidate"
+study_min_confidence = 0.45
+
+[recipes.lingerie_fashion_study_v1]
+type = "outfit"
+repeats = 10
+max_total = 200
+max_per_video = 20
+min_identity = 0.45
+min_sharpness = 60
+quota = "full_body=0.35,upper_body=0.25,portrait=0.20,closeup=0.20"
+val_fraction = 0.05
+study_primary = "lingerie_fashion_candidate"
+study_min_confidence = 0.50
+study_export_only = true
+
+[recipes.balanced_character_study_v1]
+type = "character"
+repeats = 10
+max_total = 400
+max_per_video = 40
+min_identity = 0.40
+quota = "closeup=0.20,portrait=0.30,upper_body=0.25,full_body=0.25"
+val_fraction = 0.05

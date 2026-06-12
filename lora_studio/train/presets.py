@@ -45,7 +45,55 @@ PRESETS: dict[str, dict] = {
         "min_snr_gamma": 5,
         "notes": "short runs, high-res subset (use a detail_v1 recipe)",
     },
+    # ---- Study Intelligence Layer presets ------------------------------
+    "figure_study": {
+        "network_dim": 32, "network_alpha": 16,
+        "unet_lr": 1.5e-4, "te_lr": 1e-5,
+        "batch_size": 1, "epochs": 10,
+        "min_snr_gamma": 5,
+        "caption_dropout_rate": 0.02,
+        "notes": "Identity-locked figure study: preserves face/character "
+                 "identity while improving full-body, pose, form and "
+                 "proportion consistency. Low TE LR + low caption dropout "
+                 "keep the identity token strong. Overfit risk: pose "
+                 "collapse - validate with full-body AND face close-up "
+                 "prompts every epoch (best-epoch sweep covers both).",
+    },
+    "fashion_editorial": {
+        "network_dim": 32, "network_alpha": 16,
+        "unet_lr": 1e-4, "te_lr": 5e-6,
+        "batch_size": 1, "epochs": 12,
+        "min_snr_gamma": 5,
+        "caption_dropout_rate": 0.05,
+        "notes": "Wardrobe styling, garment structure, textile detail, "
+                 "editorial pose language. Moderate caption dropout so "
+                 "garments bind to descriptors, not the identity token. "
+                 "Validate: full-body fashion, upper-body styling, textile "
+                 "detail, studio/editorial lighting.",
+    },
+    "balanced_study": {
+        "network_dim": 48, "network_alpha": 24,
+        "unet_lr": 1e-4, "te_lr": 8e-6,
+        "batch_size": 1, "epochs": 10,
+        "min_snr_gamma": 5,
+        "caption_dropout_rate": 0.03,
+        "notes": "Character + figure/fashion balance on a mixed dataset "
+                 "(balanced_character_study_v1). Watch the overfit guard "
+                 "in the sweep: likeness-flexibility gap > 0.15 means the "
+                 "study frames are overpowering identity - stop earlier.",
+    },
 }
+
+# Validation prompt set for study LoRAs (used by the eval matrix and
+# documented in model cards): face close-up, upper-body, full-body,
+# editorial pose, neutral lighting.
+STUDY_VALIDATION_PROMPTS: list[str] = [
+    "face close-up, natural expression, neutral lighting",
+    "upper body framing, relaxed pose, soft studio lighting",
+    "full body framing, balanced standing pose, form and proportion clarity",
+    "full body framing, expressive editorial pose, garment structure visible",
+    "neutral portrait, clean background, natural lighting",
+]
 
 # Shared low-VRAM / MPS-safe arguments
 COMMON_ARGS: dict[str, object] = {

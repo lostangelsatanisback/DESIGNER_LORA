@@ -1,4 +1,256 @@
-# LoRA Designer Studio (v3.0)
+# LoRA Designer Studio (v3.7)
+
+## Concept Metadata & Sidecar Hardening (v3.7 - Concept Control Feature D)
+
+Every LoRA's metadata now normalizes into one rich, backward-compatible
+shape (`lora_studio/concept_metadata.py` - `ConceptMetadata`).
+
+- **Schema v2 sidecars** - `schema_version`, `display_name`,
+  `concept_family`, `concept_tags`, `control_axes` (axis_id, label,
+  description, recommended_range, safe_default, response_curve,
+  identity_sensitivity), `priority_hint`
+  (anchor/primary/normal/supporting/experimental), `identity_risk_level`,
+  `recommended_weight_range`, structured `known_conflicts`
+  (concept_family or lora_id + reason + severity), `preview_images`,
+  reserved `signal_hooks`, `notes`. Every field optional.
+- **Legacy normalization** - old `tags` -> `concept_tags`, `preview` ->
+  `preview_images.default`, missing family -> `general_concept`, missing
+  risk -> `medium`, missing range -> conservative `[0.2, 0.7]`. Unknown
+  enum values never crash: they normalize to safe defaults and surface in
+  `normalization_warnings`. Discovery order unchanged and deterministic
+  (`<stem>.concept.json` > `<stem>.json` > previews-folder `meta.json` >
+  inferred).
+- **Response curve registry** - linear / slow_start / fast_start / damped /
+  stepped, ready for per-axis control without another schema rewrite.
+- **Resolver integration (conservative)** - `priority_hint` adjusts
+  resolver priority (supporting -15, experimental -25, anchor +40 and
+  protected from auto-trim); a supporting LoRA outweighing the identity
+  anchor raises a caution; experimental concepts get an advisory;
+  family-level known conflicts warn when the conflicting family is active
+  in the stack. v2 ranges/risk flow into the influence profile.
+- **Explorer payload** - every card carries `concept_meta` (the full
+  normalized object); cards summarize control axes, non-default priority
+  hints, and known-conflict counts.
+
+## Batch Variation Controller (v3.6 - Concept Control Feature C)
+
+Production-grade controlled variation on top of the Concept Control stack.
+
+- **Smart variation modes** - Low-Risk Studio Sweep (cap 24, value ceiling
+  0.60, strictest preservation; the default), Balanced Exploration (cap 64,
+  ceiling 0.85), Creative Exploration (cap 128, full range, explicit
+  selection required). Mode caps are hard - oversized grids return guidance
+  instead of jobs.
+- **Variation axes** - up to three axes per grid, each as an explicit value
+  list or `min:max:step`; values are validated against the slider spec and
+  clipped to the mode ceiling. The identity anchor axis is protected: it
+  can only be swept inside its safe band and is never weakened below the
+  minimum. Axis metadata (`variation_axes()`) exposes recommended ranges
+  and identity impact per attribute.
+- **Every job resolves through stack intelligence** - identity anchor held
+  fixed, per-job preservation score, risk level (`info` / `caution` /
+  `high_risk` / `blocked_or_needs_review`), warnings, and resolved weights
+  stored in the manifest (schema v9, additive columns). Deterministic job
+  ids; `load_batch()` reloads any plan; generation is resumable (generated
+  jobs skip; failures are marked).
+- **UI** - mode selector, two axis rows with live job-count estimate vs
+  cap, Create Variation Grid (dry-run: plan + manifest only), per-job
+  preservation/risk table, and **Generate Variations** which queues the
+  batch on the hub job queue against the live Forge engine.
+- **CLI** - `lora-studio -p spookums.toml concept batch --spec grid.json
+  --mode low_risk [--run]`.
+
+## Concept Modulation & Weight Intelligence (v3.5 - Concept Control Feature B)
+
+Identity preservation is now the resolver's highest-priority behavior.
+
+- **Intelligent slider mapping** - sliders no longer map 0-1 linearly:
+  concept families ride a smoothstep response curve inside their
+  recommended operating range with soft caps (range max) and a hard cap
+  (max x1.15); identity rides a protected linear band that never drops
+  below half-range. When the stack is already heavy, additional concept
+  weight is automatically damped to preserve identity headroom.
+  Professional family aliases (`identity_anchor`, `garment_style`,
+  `lighting_mood`, `pose_energy`, `form_emphasis`, `material_finish`,
+  `rendering_style`, `camera_treatment`, ...) map onto canonical families;
+  unknown families fall back to a conservative 0.10-0.30 studio-safe range.
+  Numeric inputs and sliders stay in sync through exact curve inversion.
+- **Stack intelligence v2** - concept priorities (identity 100 ... style 30,
+  unknown 20): when total concept strength exceeds 1.60 the resolver trims
+  lowest-priority concepts first and never reduces the identity anchor.
+  Each item reports requested vs resolved weight, whether it was adjusted,
+  and its pin state. Pinned (manual) weights are never auto-adjusted -
+  only warned about. Four risk levels (stable / watch / elevated / high),
+  four warning severities (info / advisory / caution / critical, sorted
+  critical-first), influence-pressure ranking, conflict list, and a
+  one-line studio summary.
+- **Actionable recommendations** - raise identity anchor, lower total
+  strength, deprioritize conflicting concept, reduce highest-risk LoRA,
+  switch to a controlled variation batch - each with proposed weights.
+  `recommended_weights` powers the UI's **Apply Suggested Balance** button.
+- **UI** - live risk badge + preservation score, requested -> resolved
+  weight column with adjustment/pin markers, click a weight to pin a
+  manual value, warnings grouped by severity, recommendation panel,
+  Apply Suggested Balance / Clear manual weights.
+
+## Visual LoRA Explorer (v3.4 - Concept Control Feature A)
+
+The Concept Control page's explorer is now a full visual browser:
+
+- **Rich sidecars** - beside any LoRA, `<stem>.json` or `<stem>.concept.json`:
+
+```json
+{
+  "display_name": "Example Style",
+  "concept_tags": ["lighting_mood", "composition_flow"],
+  "description": "Studio-facing visual style concept.",
+  "recommended_weight": 0.65,
+  "category": "lighting",
+  "preview_images": {"default": "example_style.preview.png",
+                     "low": "example_style.low.png"}
+}
+```
+
+  Both schemas work (native `family`/`influence_tags` too); broken sidecars
+  are tolerated; LoRAs with no metadata still appear (filename inference).
+- **Strength previews** - `<stem>.preview.png` plus `<stem>.low/medium/
+  high.png` beside the model, or a dedicated folder
+  `<output_base>/previews/lora/<stem>/{default,low,medium,high}.png` with
+  optional `meta.json`. Cards show level chips; missing previews show a
+  clean placeholder.
+- **Formats** - `.safetensors` (with stdlib metadata read), `.pt`, `.ckpt`.
+- **Safe serving** - previews stream only through the scan index
+  (`/api/concept/lora_preview/<id>/<level>`); no filesystem paths, no
+  traversal.
+- **Filters** - search, family, influence tag, preview availability; sort
+  by name / modified / family / identity risk.
+- **Add to stack** - one click adds at the recommended weight (identity
+  LoRAs go to the front), updates the current stack for resolution, and
+  persists the `explorer_stack` Playground preset.
+
+## Concept Control Layer (v3.3)
+
+Visually explore, combine, and finely control specialized concept LoRAs on
+top of a strong identity anchor. New hub page **Concept Control** (next to
+Playground) plus CLI. Pure stdlib; schema v8 (`lora_influence_profiles`,
+`concept_control_presets`, `variation_batches`, `variation_jobs`).
+
+```bash
+lora-studio -p spookums.toml concept scan --write-sidecars
+lora-studio -p spookums.toml concept stack --lora spookums_character_v001:0.75 --lora neon_style:0.3
+lora-studio -p spookums.toml concept batch --spec grid.json --run
+```
+
+**Visual LoRA Explorer** scans `lora_output_dir` + Forge `models/Lora`,
+reads .safetensors training metadata with a stdlib header parser (never
+loads tensors), associates `<stem>.preview.png` thumbnails, and keeps a
+*visual influence profile* per LoRA (concept family, influence tags,
+recommended weight range, identity risk, known conflicts) in
+`<stem>.concept.json` sidecars - sidecar edits override filename inference.
+Filter by family/tag/search, sort by name, modified, family, identity risk.
+
+**Attribute Controls** - 9 professional sliders (Identity Anchor Strength,
+Garment Style Intensity, Form Emphasis, Lighting Mood, Style Intensity,
+Texture Emphasis, Detail Refinement, Composition Strength, Background
+Influence). Sliders resolve into per-LoRA weights inside each family's
+recommended range; the identity anchor never drops below half its range.
+
+**Stack Intelligence** - explained recommendations with reason codes:
+identity anchor dominant, conservative concept weights, family-overlap and
+conflicting-family detection, known-conflict pairs, high-risk stacking
+warnings, automatic normalization above 1.60 total concept strength, and
+an identity preservation score (warn < 0.75, strong warn < 0.60) with
+safer-alternative suggestions. CoreShift block weights attached per item.
+
+**Batch Variations** - sweep any slider across values x seeds (capped, 64),
+identity anchor held fixed; every job stores prompt, negative, seed, resolved
+stack, slider state, warnings, and the full CoreShift generation payload in
+the manifest. Generation runs through the Forge adapter when live
+(`concept batch --run`, resumable) - otherwise the manifest + payloads wait.
+
+**Playground handoff** - "Send to Playground" writes a complete preset
+(checkpoint, sampler/steps/CFG/clip-skip, modular prompt with identity
+anchor + concept descriptors, identity-drift negative); stack and slider
+presets persist in the manifest.
+
+## Study Intelligence Layer (v3.2)
+
+Professional study classification for artistic figure studies, fashion
+editorial work, lingerie/fashion studies, and form-and-proportion studies —
+identity-preserving throughout. Pure stdlib, resumable, manifest-tracked
+(schema v7, `study_labels`); old manifests upgrade transparently.
+
+```bash
+lora-studio -p spookums.toml study classify          # label all curated frames
+lora-studio -p spookums.toml study report            # category + score summary
+lora-studio -p spookums.toml study recipes --apply   # add the 4 study recipes
+lora-studio -p spookums.toml study stack --mode character_figure_study
+lora-studio -p spookums.toml study presets           # 8 Playground presets
+```
+
+**Classifier** (`lora_studio/study.py`) fuses manifest signals — captions/
+WD14 tags, framing, identity similarity, face count, sharpness, brightness —
+into scores (`figure_study`, `fashion_study`, `lingerie_fashion`,
+`pose_clarity`, `silhouette_clarity`, `garment_visibility`, `identity_lock`),
+a primary category, study tags, reason codes (`clear_full_body_framing`,
+`garment_structure_visible`, `lighting_quality_pass`, ...), a review status
+and export eligibility. Ambiguous or sensitive frames route to
+`needs_review` and are excluded from study exports until approved. Manual
+overrides (Review tab "S" button or `set_manual_label`) always win and
+survive re-classification. `SIGNAL_HOOKS` is the extension point for
+optional local pose/aesthetic/CLIP scorers.
+
+**Dataset recipes** (`study recipes --apply`, then build/wizard as usual):
+`figure_study_v1` (40/30/20/10 full/upper/portrait/detail, identity-locked),
+`fashion_editorial_v1` (wardrobe + textile detail), `lingerie_fashion_study_v1`
+(export-eligible frames only, strongest identity floor),
+`balanced_character_study_v1` (identity-first with study support frames).
+Recipes accept `study_primary`, `study_min_confidence`, `study_export_only`.
+
+**Training presets**: `figure_study`, `fashion_editorial`, `balanced_study`
+(dim 32-48, low TE LR for identity retention, caption-dropout tuned per
+goal; rationale + validation guidance in each preset's notes; validation
+prompt set in `train/presets.py::STUDY_VALIDATION_PROMPTS`).
+
+**Stack Planner modes** (`study stack --mode ...`): `character_identity`,
+`character_fashion_study`, `character_figure_study`, `character_style`,
+`character_fashion_style`, `character_figure_fashion_editorial` — identity
+LoRA stays primary, support LoRAs secondary, merge order + conflict
+warnings + CoreShift block weights included.
+
+**Review tab**: Study filter (candidates per category, Needs Study Review,
+Export Eligible, Strong Identity Lock, Strong Pose Clarity), sort by study
+confidence / identity lock / figure / fashion scores, study chip with
+confidence + reason codes on hover, "S" button to set a manual study label.
+
+**Playground presets** (`study presets`): Identity-Locked Figure Study,
+Fashion Editorial Study, Lingerie/Fashion Study, Character + Figure/Fashion
+Consistency Tests, and Merge QA (Identity Preservation / Full-Body
+Consistency / Editorial Fashion) — all tuned for CyberRealistic Pony v18.0
+CoreShift with QA notes embedded.
+
+Limitations: the baseline classifier is heuristic (caption + geometry
+signals); pose estimation and aesthetic scoring land via `SIGNAL_HOOKS`
+without new required dependencies.
+
+## Base model: CyberRealistic Pony v18.0 CoreShift
+
+The studio standard checkpoint. `lora_studio/base_models.py` auto-detects it
+from `base_model` in your project file and retunes **everything**:
+
+- Playground presets & eval matrix: **DPM++ SDE Karras, 32 steps, CFG 5,
+  clip skip 2** (Forge gets clip skip via `override_settings`)
+- Prompts: `score_9, score_8_up, score_7_up` + photoreal tags; photoreal
+  negative (anti-cartoon/anime/3d)
+- Stack Planner block weights that protect CoreShift's texture engine:
+  flavor `te=0,down=0.2,mid=0.4,up=0.9` · wardrobe `te=0,down=1,mid=1,up=0.8`
+  · refiner `te=0,down=0.1,mid=0.3,up=0.9`
+- Sidebar **Engines** strip: live Forge / Playground / Factory dots on every
+  page; click a dot to start the engine. Factory steps now stream full
+  tracebacks into their output box on failure (state preserved, re-run safe).
+
+Swap the checkpoint path and the profile follows (Pony V6 and generic SDXL
+profiles included). Override per-run: `matrix --sampler --steps --cfg --clip-skip`.
 
 ## Complete End-to-End Workflow
 
