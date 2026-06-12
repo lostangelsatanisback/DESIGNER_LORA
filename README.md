@@ -510,6 +510,71 @@ lora-studio -p spookums.toml matrix --lora ~/LORA_OUTPUT/spook_final_v1.safetens
 Concat method: mixed ranks merge correctly; negative weights subtract.
 Also available in the UI **Lab** tab, next to **A/B blind compare**.
 
+## Preset Recommendation System (v3.19)
+
+`suggest-preset` analyzes a built dataset version (dataset analysis,
+Study Intelligence classification rates, identity consistency, framing
+distribution, caption/study coverage, recipe context) and recommends the
+most suitable training preset with a confidence score, professional
+reasoning, alternatives and warnings.
+
+```bash
+lora-studio -p spookums.toml suggest-preset --dataset 1
+lora-studio -p spookums.toml suggest-preset --dataset 1 --recipe mdma_intimate_v1
+lora-studio -p spookums.toml suggest-preset --dataset 1 --json
+```
+
+How it chooses: identity preservation first. Weak identity consistency
+(< 0.45), small datasets (< 150 frames) or low quality scores gate all
+specialized presets down to `balanced_study` / `intimate_figure`. Strong
+figure/form-proportion coverage with full-body framing points at
+`fine_art_figure_study` / `figure_study`; fashion and lingerie-fashion
+study rates point at `lingerie_form_study` / `fashion_editorial`; the
+high-detail preset is only eligible on large, sharp, identity-stable
+datasets (quality >= 0.75, 400+ frames). Only presets that exist in
+`train/presets.py` are ever recommended (preference-chain fallback
+otherwise). Confidence >= 0.8 means a clear signal; 0.5-0.8 means the
+dataset is mixed - read the warnings before training. Also in the UI:
+Train tab -> "Suggest Training Preset" -> "Use This Preset". The Train
+tab preset list and `train --preset` choices now include every preset
+in the library.
+
+## MergeForge (v3.18) - intelligent merge engine
+
+Builds on the Merging Lab with library analysis, compatibility scoring,
+reproducible recipes, and a mathematically exact `weighted_sum` method
+(full delta composition + SVD re-extraction, so the result keeps a fixed
+rank instead of growing like concat).
+
+```bash
+# classify + health-score every LoRA in the library:
+lora-studio -p spookums.toml mergeforge scan
+
+# compatibility + recommended weights for a candidate set (library ids):
+lora-studio -p spookums.toml mergeforge plan --lora spook_character_v001 \
+  --lora spook_wardrobe_v002
+
+# execute (recipe JSON with sha256-pinned inputs is saved automatically):
+lora-studio -p spookums.toml mergeforge merge \
+  --lora ~/LORA_OUTPUT/spook_character_v001.safetensors:0.70 \
+  --lora ~/LORA_OUTPUT/spook_wardrobe_v002.safetensors:0.30 \
+  --name spook_complete_v1 --method weighted_sum
+
+# history + exact re-runs:
+lora-studio -p spookums.toml mergeforge recipes
+lora-studio -p spookums.toml mergeforge rerun mf_xxxxxxxxxx
+```
+
+Identity-first weight policy: anchors at 0.70, concepts at conservative
+band midpoints, automatic damping when 3+ concept layers compete, and a
+1.60 total-weight advisory. Compatibility verdicts (excellent .. avoid)
+use declared conflicts, family overlap, identity risk, and base-model
+match - the overall verdict is the weakest pair. Outputs never overwrite
+(auto `_1` suffix), every merge writes a `mergeforge` sidecar fragment +
+manifest note, and recipes land in `mergeforge_recipes/` for exact
+reproduction. UI: **MergeForge** tab (scan, smart recommendation groups,
+guided wizard, recipe history).
+
 ## Registry, cards, maintenance
 
 ```bash

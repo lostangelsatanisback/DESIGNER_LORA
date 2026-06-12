@@ -83,19 +83,78 @@ PRESETS: dict[str, dict] = {
                  "study frames are overpowering identity - stop earlier.",
     },
     "intimate_figure": {
-    "network_dim": 40,
-    "network_alpha": 20,
-    "unet_lr": 1.2e-4,
-    "te_lr": 8e-6,
-    "batch_size": 1,
-    "epochs": 12,
-    "min_snr_gamma": 5,
-    "caption_dropout_rate": 0.015,
-    "notes": "Specialized for intimate figure studies. Higher emphasis on "
-             "body proportion, form, skin detail and natural posing while "
-             "maintaining very strong identity lock. Lower caption dropout "
-             "than balanced_study. Best used with figure_study / "
-             "lingerie_fashion_study recipes.",
+        "network_dim": 40,
+        "network_alpha": 20,
+        "unet_lr": 1.2e-4,
+        "te_lr": 8e-6,
+        "batch_size": 1,
+        "epochs": 12,
+        "min_snr_gamma": 5,
+        "caption_dropout_rate": 0.015,
+        "notes": "Specialized for intimate figure studies. Higher emphasis on "
+                 "body proportion, form, skin detail and natural posing while "
+                 "maintaining very strong identity lock. Lower caption dropout "
+                 "than balanced_study. Best used with figure_study / "
+                 "lingerie_fashion_study recipes.",
+    },
+
+    # === Specialized Intimate / Figure Study Presets ===
+
+    "intimate_anatomy_study": {
+        "network_dim": 48,
+        "network_alpha": 24,
+        "unet_lr": 1.4e-4,
+        "te_lr": 6e-6,
+        "batch_size": 1,
+        "epochs": 14,
+        "min_snr_gamma": 5,
+        "caption_dropout_rate": 0.01,
+        "notes": "High-detail anatomical figure study. Strong emphasis on skin texture, "
+                 "body form, proportion, and fine anatomical details. Very low caption "
+                 "dropout to lock identity while allowing detailed body rendering. "
+                 "Best paired with high-quality full-body and close-up anatomical frames.",
+    },
+
+    "lingerie_form_study": {
+        "network_dim": 40,
+        "network_alpha": 20,
+        "unet_lr": 1.1e-4,
+        "te_lr": 5e-6,
+        "batch_size": 1,
+        "epochs": 12,
+        "min_snr_gamma": 5,
+        "caption_dropout_rate": 0.02,
+        "notes": "Specialized for lingerie, sheer garments, and form-revealing clothing. "
+                 "Balances identity lock with garment structure and fabric interaction. "
+                 "Good for wardrobe variation workflows.",
+    },
+
+    "fine_art_figure_study": {
+        "network_dim": 56,
+        "network_alpha": 28,
+        "unet_lr": 9e-5,
+        "te_lr": 4e-6,
+        "batch_size": 1,
+        "epochs": 10,
+        "min_snr_gamma": 5,
+        "caption_dropout_rate": 0.015,
+        "notes": "Fine-art style figure studies with emphasis on lighting on skin, "
+                 "subtle form, and artistic anatomy. Lower learning rate for cleaner "
+                 "results on high-quality reference sets.",
+    },
+
+    "explicit_body_detail": {
+        "network_dim": 56,           # Reduced from 64 — safer on personal datasets
+        "network_alpha": 28,
+        "unet_lr": 1.3e-4,
+        "te_lr": 4e-6,
+        "batch_size": 1,
+        "epochs": 10,                # Increased from 8 for stability
+        "min_snr_gamma": 5,
+        "caption_dropout_rate": 0.01,
+        "notes": "High-detail mode focused on skin texture, pores, and fine anatomical "
+                 "features. Use only on very clean, high-resolution datasets. "
+                 "Monitor closely for overfitting.",
     },
 }
 

@@ -151,6 +151,25 @@ def build_anchor(cfg: SmartCurateConfig) -> Generator[str, None, None]:
 # Smart pass over selected frames
 # -----------------------------
 
+def _upright_rotation_from_kps(kps) -> int:
+    """CCW degrees needed to make the face upright (0/90/180/270) from
+    the eyes->mouth axis.  0 means already upright."""
+    ex, ey = (kps[0][0] + kps[1][0]) / 2, (kps[0][1] + kps[1][1]) / 2
+    mx, my = (kps[3][0] + kps[4][0]) / 2, (kps[3][1] + kps[4][1]) / 2
+    dx, dy = mx - ex, my - ey
+    if abs(dy) >= abs(dx):
+        return 0 if dy > 0 else 180
+    # mouth left of eyes -> face's down points left -> rotate 270 CCW
+    return 270 if dx < 0 else 90
+
+
+def _rotate_bgr(img, ccw_degrees: int, cv2):
+    code = {90: cv2.ROTATE_90_COUNTERCLOCKWISE,
+            180: cv2.ROTATE_180,
+            270: cv2.ROTATE_90_CLOCKWISE}[ccw_degrees]
+    return cv2.rotate(img, code)
+
+
 def smart_curate_generator(cfg: SmartCurateConfig) -> Generator[str, None, None]:
     setup_logging(cfg.output_base)
     ok, reason = smart_available()
@@ -204,6 +223,35 @@ def smart_curate_generator(cfg: SmartCurateConfig) -> Generator[str, None, None]
             continue
         ih, iw = img.shape[:2]
         faces = app.get(img)
+
+        # orientation correction: landmark check on detected faces, and
+        # 90/180/270 rescue when the detector finds nothing (SCRFD is
+        # rotation-sensitive - sideways faces read as no-face)
+        rotated_by = 0
+        if getattr(cfg, "auto_rotate", True):
+            if faces:
+                rot = _upright_rotation_from_kps(
+                    max(faces, key=lambda f: f.det_score).kps)
+                if rot:
+                    img = _rotate_bgr(img, rot, cv2)
+                    new_faces = app.get(img)
+                    if new_faces:
+                        faces, rotated_by = new_faces, rot
+                        ih, iw = img.shape[:2]
+            else:
+                for rot in (90, 180, 270):
+                    cand = _rotate_bgr(img, rot, cv2)
+                    new_faces = app.get(cand)
+                    if new_faces and not _upright_rotation_from_kps(
+                            max(new_faces, key=lambda f: f.det_score).kps):
+                        img, faces, rotated_by = cand, new_faces, rot
+                        ih, iw = img.shape[:2]
+                        break
+        if rotated_by:
+            try:
+                cv2.imwrite(path_str, img)
+            except Exception:
+                rotated_by = 0
 
         if not faces:
             conn.execute(

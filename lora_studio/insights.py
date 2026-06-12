@@ -122,10 +122,8 @@ def check_orientation(image_path):
         faces = _SWAPPER["app"].get(cv2.imread(str(image_path)))
         if not faces:
             return None
-        kps = faces[0].kps          # [l_eye, r_eye, nose, l_mouth, r_mouth]
-        eyes_y = (kps[0][1] + kps[1][1]) / 2
-        mouth_y = (kps[3][1] + kps[4][1]) / 2
-        return 180 if eyes_y > mouth_y else 0
+        from .curate.smart import _upright_rotation_from_kps
+        return _upright_rotation_from_kps(faces[0].kps)
     except Exception:
         return None
 
@@ -173,3 +171,108 @@ def log_stack_history(conn, summary: dict, keep: int = 100) -> None:
         "AND name NOT IN (SELECT name FROM concept_control_presets WHERE "
         "kind='stack_history' ORDER BY name DESC LIMIT ?)", (keep,))
     conn.commit()
+
+
+def _hamming(a: str, b: str) -> int:
+    try:
+        return bin(int(a, 16) ^ int(b, 16)).count("1")
+    except Exception:
+        return 64
+
+
+def aesthetic_proxy(row: dict) -> float:
+    """Lightweight aesthetic score (0-1) from technical signals: sharpness,
+    exposure band, framing readability.  Registered as a study SIGNAL_HOOK
+    and used as the duplicate-collapse tiebreak.  No ML required."""
+    sharp = min(float(row.get("sharpness") or 0), 150.0) / 150.0
+    b = row.get("brightness")
+    expo = 1.0 - min(abs((float(b) if b is not None else 110) - 110) / 110,
+                     1.0)
+    framing = {"full_body": 1.0, "upper_body": 0.9, "portrait": 0.8,
+               "closeup": 0.7}.get(row.get("framing") or "", 0.5)
+    return round(0.5 * sharp + 0.3 * expo + 0.2 * framing, 3)
+
+
+try:                                    # register as an optional probe
+    from .study import SIGNAL_HOOKS as _SH
+    _SH.setdefault("aesthetic_proxy",
+                   lambda row: {"aesthetic_score": aesthetic_proxy(row)})
+except Exception:
+    pass
+
+
+def collapse_near_duplicates(conn, max_hamming: int = 6,
+                             apply: bool = False) -> dict:
+    """Duplicate-pose collapse: within each source, consecutive frames
+    whose dHash differs by <= max_hamming bits are near-identical poses -
+    keep the highest aesthetic score, reject the rest (reversible:
+    status rejected_neardup)."""
+    rows = conn.execute(
+        "SELECT f.frame_id, f.source_id, f.path, f.dhash, f.sharpness, "
+        "f.brightness, d.framing FROM frames f LEFT JOIN detections d ON "
+        "d.frame_id=f.frame_id WHERE f.status IN ('selected','packaged') "
+        "AND f.dhash IS NOT NULL ORDER BY f.source_id, f.path").fetchall()
+    rejected, kept_groups = [], 0
+    group: list = []
+
+    def flush():
+        nonlocal kept_groups
+        if len(group) > 1:
+            kept_groups += 1
+            best = max(group, key=lambda r: aesthetic_proxy(
+                {"sharpness": r[4], "brightness": r[5], "framing": r[6]}))
+            rejected.extend(r[0] for r in group if r[0] != best[0])
+        group.clear()
+
+    prev = None
+    for r in rows:
+        if (prev is not None and r[1] == prev[1]
+                and _hamming(r[3], prev[3]) <= max_hamming):
+            if not group:
+                group.append(prev)
+            group.append(r)
+        else:
+            flush()
+        prev = r
+    flush()
+    if apply and rejected:
+        conn.executemany(
+            "UPDATE frames SET status='rejected_neardup' WHERE frame_id=?",
+            [(fid,) for fid in rejected])
+        conn.commit()
+    return {"groups": kept_groups, "would_reject": len(rejected),
+            "applied": bool(apply and rejected)}
+
+
+def fix_rotations(conn, prj, apply: bool = False,
+                  limit: int = 0):
+    """Orientation pass over curated frames: detect upside-down faces via
+    landmarks and rotate the extracted frame file 180 degrees in place
+    (source media untouched).  Yields progress; resumable by nature
+    (correct frames are no-ops)."""
+    rows = conn.execute(
+        "SELECT f.frame_id, f.path FROM frames f JOIN detections d ON "
+        "d.frame_id=f.frame_id WHERE f.status IN ('selected','packaged') "
+        "AND d.face_count >= 1").fetchall()
+    if limit:
+        rows = rows[:limit]
+    yield f"Orientation check: {len(rows)} frames"
+    flipped = 0
+    for i, (fid, path) in enumerate(rows, 1):
+        rot = check_orientation(path)
+        if rot:
+            flipped += 1
+            if apply:
+                try:
+                    from PIL import Image
+                    img = Image.open(path).rotate(rot, expand=True)
+                    img.save(path)
+                    yield f"  rotated {fid} by {rot} deg"
+                except Exception as exc:
+                    yield f"  {fid}: rotate failed ({exc})"
+            else:
+                yield f"  {fid}: needs {rot} deg rotation (dry run)"
+        if i % 500 == 0:
+            yield f"  {i}/{len(rows)} checked..."
+    yield (f"Done: {flipped} upside-down frame(s) "
+           f"{'rotated' if apply else 'found (use --apply to fix)'}")

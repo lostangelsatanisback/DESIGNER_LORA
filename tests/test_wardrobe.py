@@ -429,3 +429,55 @@ def test_global_search_and_stack_history(tmp_path):
     assert len(hist) == 5
     assert hist[0]["payload"]["score"] == 0.9
     conn.close()
+
+
+def test_aesthetic_proxy_and_duplicate_collapse(tmp_path):
+    from lora_studio import manifest
+    from lora_studio.insights import (aesthetic_proxy,
+                                      collapse_near_duplicates)
+    from lora_studio.study import SIGNAL_HOOKS
+    # hook registered + sane ordering
+    assert "aesthetic_proxy" in SIGNAL_HOOKS
+    good = aesthetic_proxy({"sharpness": 120, "brightness": 110,
+                            "framing": "full_body"})
+    bad = aesthetic_proxy({"sharpness": 20, "brightness": 240,
+                           "framing": "closeup"})
+    assert good > bad and 0 <= bad < good <= 1
+    conn = manifest.connect(tmp_path)
+    # s1: three near-identical frames (1-bit hamming) + one distinct;
+    # s2: separate source must not merge with s1
+    frames = [("a1", "s1", "/v/a1.jpg", "ff00", 50),
+              ("a2", "s1", "/v/a2.jpg", "ff01", 120),   # sharpest -> kept
+              ("a3", "s1", "/v/a3.jpg", "ff03", 80),
+              ("b1", "s1", "/v/b1.jpg", "00f0", 90),    # distant hash (14 bits)
+              ("c1", "s2", "/v/c1.jpg", "ff00", 200)]   # other source
+    for fid, sid, path, dh, sharp in frames:
+        conn.execute("INSERT INTO frames(frame_id, source_id, path, dhash, "
+                     "sharpness, brightness, status) VALUES "
+                     "(?,?,?,?,?,110,'selected')", (fid, sid, path, dh, sharp))
+    conn.commit()
+    dry = collapse_near_duplicates(conn, apply=False)
+    assert dry["groups"] == 1 and dry["would_reject"] == 2
+    assert not dry["applied"]
+    res = collapse_near_duplicates(conn, apply=True)
+    assert res["applied"]
+    statuses = dict(conn.execute("SELECT frame_id, status FROM frames"))
+    assert statuses["a2"] == "selected"               # best kept
+    assert statuses["a1"] == statuses["a3"] == "rejected_neardup"
+    assert statuses["b1"] == statuses["c1"] == "selected"
+    conn.close()
+
+
+def test_upright_rotation_geometry():
+    from lora_studio.curate.smart import _upright_rotation_from_kps
+    # kps: [l_eye, r_eye, nose, l_mouth, r_mouth]
+    upright = [(40, 40), (60, 40), (50, 55), (43, 70), (57, 70)]
+    assert _upright_rotation_from_kps(upright) == 0
+    upside = [(60, 70), (40, 70), (50, 55), (57, 40), (43, 40)]
+    assert _upright_rotation_from_kps(upside) == 180
+    # mouth to the LEFT of eyes (head lying with chin pointing left)
+    left = [(70, 40), (70, 60), (55, 50), (40, 43), (40, 57)]
+    assert _upright_rotation_from_kps(left) == 270
+    # mouth to the RIGHT of eyes
+    right = [(30, 60), (30, 40), (45, 50), (60, 57), (60, 43)]
+    assert _upright_rotation_from_kps(right) == 90

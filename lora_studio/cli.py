@@ -75,6 +75,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p_cu.add_argument("--max-brightness", type=float, default=242.0)
     p_cu.add_argument("--workers", type=int, default=8)
     p_cu.add_argument("--rescore", action="store_true")
+    p_cu.add_argument("--no-auto-rotate", dest="auto_rotate",
+                      action="store_false", default=True,
+                      help="disable 90/180/270 orientation rescue")
     p_cu.add_argument("--smart", action="store_true",
                       help="Run face+identity filtering after the basic pass")
     p_cu.add_argument("--smart-only", action="store_true",
@@ -121,10 +124,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p_df.add_argument("--output", default=None)
     p_df.add_argument("--full", action="store_true", help="list every changed frame")
 
+    from .train.presets import PRESETS as _PRESETS
     p_tr = sub.add_parser("train", help="Train a LoRA from a dataset build (Phase 5)")
     p_tr.add_argument("--dataset", type=int, required=True, help="dataset version")
     p_tr.add_argument("--preset", default="character",
-                      choices=["character", "style", "outfit", "pose", "detail"])
+                      choices=sorted(_PRESETS))
     p_tr.add_argument("--name", default="")
     p_tr.add_argument("--output", default=None)
     p_tr.add_argument("--dry-run", action="store_true",
@@ -134,6 +138,19 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
     sub.add_parser("runs", help="List training runs")
     sub.add_parser("presets", help="Show training preset parameters")
+
+    p_sp = sub.add_parser("suggest-preset",
+                          help="Recommend a training preset for a built "
+                               "dataset (dataset analysis + Study "
+                               "Intelligence + recipe context)")
+    p_sp.add_argument("--dataset", type=int, required=True,
+                      help="dataset version")
+    p_sp.add_argument("--recipe", default=None,
+                      help="recipe context override (defaults to the "
+                           "recipe stored with the build)")
+    p_sp.add_argument("--json", action="store_true",
+                      help="emit the full recommendation as JSON")
+    p_sp.add_argument("--output", default=None)
 
     p_tg = sub.add_parser("testgen", help="Single test generation (Phase 6)")
     p_tg.add_argument("--prompt", required=True)
@@ -228,12 +245,44 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
     sub.add_parser("analyze", help="Dataset analysis + LoRA type detection")
 
+    p_mf = sub.add_parser("mergeforge", help="LoRA merge engine: scan / "
+                                             "plan / merge / recipes")
+    mf_sub = p_mf.add_subparsers(dest="mf_cmd", required=True)
+    mf_sub.add_parser("scan", help="Classify + health-score the LoRA library")
+    mf_p = mf_sub.add_parser("plan", help="Compatibility + weight plan for "
+                                          "library lora_ids")
+    mf_p.add_argument("--lora", action="append", required=True,
+                      help="repeatable library lora_id")
+    mf_m = mf_sub.add_parser("merge", help="Execute a merge (weighted_sum "
+                                           "with SVD re-extract, or concat)")
+    mf_m.add_argument("--lora", action="append", required=True,
+                      metavar="PATH:WEIGHT", help="repeatable")
+    mf_m.add_argument("--name", default="mergeforge_v1")
+    mf_m.add_argument("--method", default="weighted_sum",
+                      choices=["weighted_sum", "concat"])
+    mf_m.add_argument("--rank", type=int, default=0,
+                      help="target rank (0 = max input rank)")
+    mf_m.add_argument("--output", default=None)
+    mf_r = mf_sub.add_parser("recipes", help="List saved merge recipes")
+    mf_r.add_argument("--output", default=None)
+    mf_x = mf_sub.add_parser("rerun", help="Re-execute a saved recipe by id")
+    mf_x.add_argument("recipe_id")
+    mf_x.add_argument("--output", default=None)
+
     p_in = sub.add_parser("insights", help="Dataset health / caption lint "
                                            "/ cluster naming")
     in_sub = p_in.add_subparsers(dest="insights_cmd", required=True)
     in_sub.add_parser("health", help="Dataset health score + reasons")
     in_sub.add_parser("lint", help="Caption/detection contradictions")
     in_sub.add_parser("clusters", help="Auto-name clusters from tags")
+    in_c = in_sub.add_parser("collapse", help="Duplicate-pose collapse "
+                                              "(near-identical frames)")
+    in_c.add_argument("--apply", action="store_true")
+    in_c.add_argument("--max-hamming", type=int, default=6)
+    in_r = in_sub.add_parser("rotation", help="Detect/fix upside-down "
+                                              "frames (landmark check)")
+    in_r.add_argument("--apply", action="store_true")
+    in_r.add_argument("--limit", type=int, default=0)
 
     p_pv = sub.add_parser("previews", help="Forge-render default/low/"
                                            "medium/high LoRA previews")
@@ -420,7 +469,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             for update in curate_generator(cfg):
                 print(update)
         if args.smart or args.smart_only:
-            scfg = SmartCurateConfig(
+            scfg = SmartCurateConfig(auto_rotate=args.auto_rotate, 
                 output_base=base,
                 identity_threshold=args.identity_threshold,
                 min_face_area=args.min_face_area,
@@ -511,6 +560,63 @@ def main(argv: Optional[list[str]] = None) -> None:
         from .maintenance import restore_project
         dest = restore_project(args.archive, args.dest)
         print(f"Extracted to {dest} - review and place files manually.")
+    elif cmd == "mergeforge":
+        from . import mergeforge as mf
+        if args.mf_cmd == "scan":
+            rep = mf.analyze_library(prj)
+            print(f"{rep['library_size']} LoRAs | roles: "
+                  + " ".join(f"{k}={v}" for k, v
+                             in sorted(rep["role_counts"].items()))
+                  + (" | merge-ready" if rep["merge_ready"] else ""))
+            for n in rep["notes"]:
+                print(f"  note: {n}")
+            for e in rep["entries"]:
+                h = e["health"]
+                print(f"  {e['lora_id']:<36} {e['role']:<16} "
+                      f"health {h['grade']}({h['score']})  "
+                      f"[{', '.join(e['reason_codes'])}]")
+        elif args.mf_cmd == "plan":
+            plan = mf.wizard_plan(prj, args.lora)
+            if plan.get("error"):
+                print(f"FATAL: {plan['error']}")
+                raise SystemExit(1)
+            c = plan["compatibility"]
+            print(f"Compatibility: {c['overall_verdict']} "
+                  f"({c['overall_score']}/100)")
+            for p in c["pairs"]:
+                for w in p["warnings"]:
+                    print(f"  ! {w}")
+            print("Recommended weights:")
+            for k, w in plan["weights"]["weights"].items():
+                print(f"  {k:<36} {w}")
+            for n in plan["weights"]["notes"]:
+                print(f"  note: {n}")
+            print(f"Recipe draft id: {plan['recipe_draft']['recipe_id']}")
+        elif args.mf_cmd == "merge":
+            from .eval.matrix import parse_lora_specs
+            loras = []
+            for spec in args.lora:
+                loras.extend(parse_lora_specs(spec))
+            rec = mf.make_recipe(args.name, loras, method=args.method,
+                                 base_model=prj.base_model)
+            for update in mf.execute_recipe(prj, out_base(args.output),
+                                            rec, output_name=args.name,
+                                            target_rank=args.rank):
+                print(update)
+        elif args.mf_cmd == "recipes":
+            for r in mf.load_recipes(out_base(args.output)):
+                print(f"  {r['recipe_id']}  {r['name']:<28} {r['method']:<13}"
+                      f" {r['created_at'][:16]}  -> {r.get('output') or '-'}")
+        elif args.mf_cmd == "rerun":
+            recs = {r["recipe_id"]: r
+                    for r in mf.load_recipes(out_base(args.output))}
+            if args.recipe_id not in recs:
+                print(f"FATAL: unknown recipe id {args.recipe_id}")
+                raise SystemExit(1)
+            r = recs[args.recipe_id]
+            for update in mf.execute_recipe(prj, out_base(args.output), r,
+                                            output_name=r["name"] + "_rerun"):
+                print(update)
     elif cmd == "insights":
         from . import insights
         conn = manifest.connect(prj.output_path)
@@ -525,6 +631,17 @@ def main(argv: Optional[list[str]] = None) -> None:
             print(f"{len(issues)} frames with caption/detection conflicts")
             for i in issues[:25]:
                 print(f"  {i['frame_id']}: {'; '.join(i['issues'])}")
+        elif args.insights_cmd == "collapse":
+            r = insights.collapse_near_duplicates(
+                conn, max_hamming=args.max_hamming, apply=args.apply)
+            verb = ("rejected" if r["applied"]
+                    else "would be rejected (use --apply)")
+            print(f"{r['groups']} near-duplicate groups | "
+                  f"{r['would_reject']} frames {verb}")
+        elif args.insights_cmd == "rotation":
+            for u in insights.fix_rotations(conn, prj, apply=args.apply,
+                                            limit=args.limit):
+                print(u)
         elif args.insights_cmd == "clusters":
             names = insights.name_clusters(conn)
             for cid in sorted(names, key=int):
@@ -801,6 +918,26 @@ def main(argv: Optional[list[str]] = None) -> None:
             print(f"  {name:<10} dim {p['network_dim']}/{p['network_alpha']:<3} "
                   f"lr {p['unet_lr']}/{p['te_lr']} batch {p['batch_size']} "
                   f"epochs {p['epochs']}  - {p['notes']}")
+    elif cmd == "suggest-preset":
+        from .train.preset_recommender import (format_recommendation,
+                                               suggest_preset)
+        conn = manifest.connect(out_base(args.output))
+        try:
+            rec = suggest_preset(conn, args.dataset,
+                                 recipe_name=args.recipe)
+        except ValueError as exc:
+            print(f"FATAL: {exc}")
+            raise SystemExit(1)
+        finally:
+            conn.close()
+        if args.json:
+            print(json.dumps(rec, indent=2))
+        else:
+            print(format_recommendation(rec))
+            print(f"\nTrain with it:\n  lora-studio -p "
+                  f"{args.project or 'project.toml'} train "
+                  f"--dataset {args.dataset} "
+                  f"--preset {rec['recommended_preset']} --dry-run")
     elif cmd == "train":
         from .train.kohya import TrainConfig, train_generator
         overrides = {}

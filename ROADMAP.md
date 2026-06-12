@@ -259,6 +259,21 @@ P1 Foundation ──► P2 Smart Curation ──► P3 Captioning ──► P4 C
 
 ## v4 Backlog (agreed 2026-06-12) - implement in order across sessions
 
+SHIPPED v3.19: Preset Recommendation System - `suggest-preset` CLI
+(+ --json), train/preset_recommender.py (dataset-version-scoped signal
+extraction, identity-preserving explainable scoring, dynamic preset
+availability with fallback chains), Train tab Suggest/Use buttons,
+dynamic preset lists in CLI `train --preset` and the Train tab select
+(all 13 presets now selectable).
+
+SHIPPED v3.18: MergeForge - library analyzer with merge-role
+classification + health grades, pairwise/stack compatibility scoring,
+identity-first weight recommender, five smart recommendation groups,
+weighted_sum merge (delta compose + SVD re-extract, exact at full rank)
+alongside concat, sha256-pinned reproducible recipes with history +
+re-run, MergeForge UI tab + /api/mergeforge/*, CLI `mergeforge
+scan|plan|merge|recipes|rerun`.
+
 SHIPPED v3.13: Review keyboard triage (arrows + K/R + [ ]), measured
 face-similarity in the Variation Review Grid (manifest v11), backup/restore
 commands, compact density toggle.

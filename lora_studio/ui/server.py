@@ -416,6 +416,7 @@ body.compact h2{margin:4px 0}
   <div class="tab pg" data-g="train">Train</div>
   <div class="tab pg" data-g="test">Test</div>
   <div class="tab pg" data-g="lab">Lab</div>
+  <div class="tab pg" data-g="mergeforge">MergeForge</div>
   <div class="group">&nbsp;</div>
   <div class="tab pg" data-g="settings">Settings</div>
   <div class="group">Search</div>
@@ -913,6 +914,8 @@ body.compact h2{margin:4px 0}
       <option>character</option><option>style</option><option>outfit</option>
       <option>pose</option><option>detail</option>
     </select>
+    <button class="mini" onclick="suggestPreset()">Suggest Training Preset</button>
+    <div id="t_suggest" class="sub" style="margin-top:6px"></div>
     <label>Run name (blank = auto)</label>
     <input id="t_name" value="">
     <div class="chk"><input type="checkbox" id="t_dry" checked><span>Dry run (print command only)</span></div>
@@ -1057,6 +1060,42 @@ body.compact h2{margin:4px 0}
 </div>
 </div>
 
+<!-- ============ MERGEFORGE PAGE ============ -->
+<div class="page" id="page-mergeforge">
+<div class="grid">
+<div>
+  <div class="card">
+    <h2>Library Scan</h2>
+    <div class="sub" id="mf_scan_sum">scanning...</div>
+    <div id="mf_library" style="max-height:340px;overflow:auto;margin-top:8px"></div>
+    <button class="mini" onclick="mfScan()">Rescan</button>
+  </div>
+  <div class="card">
+    <h2>Guided Merge Wizard</h2>
+    <div class="sub">1. tick LoRAs above &middot; 2. Plan &middot; 3. adjust weights &middot; 4. Forge</div>
+    <button class="mini" onclick="mfPlan()">Plan selected</button>
+    <div id="mf_plan" style="margin-top:8px"></div>
+    <label>Output name</label>
+    <input id="mf_name" value="mergeforge_v1">
+    <label>Target rank (0 = auto: max input rank)</label>
+    <input id="mf_rank" type="number" value="0" min="0" max="256">
+    <button class="warn" id="mf_go" style="display:none" onclick="mfMerge()">Forge Merge</button>
+    <div class="sub" id="mf_msg" style="margin-top:6px"></div>
+  </div>
+</div>
+<div>
+  <div class="card">
+    <h2>Smart Recommendations</h2>
+    <div id="mf_recs" class="sub">open this tab to load...</div>
+  </div>
+  <div class="card">
+    <h2>Recipe History</h2>
+    <div id="mf_recipes" class="sub">none yet</div>
+  </div>
+</div>
+</div>
+</div>
+
 <!-- ============ SETTINGS PAGE ============ -->
 <div class="page" id="page-settings">
 <div class="grid">
@@ -1100,6 +1139,7 @@ document.querySelectorAll('.tab.pg').forEach(t=>t.onclick=()=>{
   if(t.dataset.g==='play'||t.dataset.g==='factory')appPoll();
   if(t.dataset.g==='concept'){loadConceptSliders();loadConceptCards();loadStarters();rgLoadBatches();}
   if(t.dataset.g==='wardrobe')loadWardrobe();
+  if(t.dataset.g==='mergeforge'){mfScan();mfLoadRecipes();}
 });
 
 // ============ Concept Control ============
@@ -1566,6 +1606,35 @@ async function loadTrainDatasets(){
   document.getElementById('t_dataset').innerHTML=(r.datasets||[]).slice().reverse().map(d=>
     `<option value="${d.version}">v${String(d.version).padStart(3,'0')} ${d.recipe} (${d.train} imgs)</option>`).join('')
     ||'<option value="">(no builds yet)</option>';
+  try{
+    const p=await(await fetch('/api/train/presets')).json();
+    if((p.presets||[]).length){
+      const cur=v('t_preset');
+      document.getElementById('t_preset').innerHTML=p.presets.map(x=>
+        `<option${x===cur?' selected':''}>${x}</option>`).join('');
+    }
+  }catch(e){}
+}
+async function suggestPreset(){
+  const ds=v('t_dataset');
+  const out=document.getElementById('t_suggest');
+  if(!ds){out.textContent='Build a dataset first (Builds tab)';return;}
+  out.textContent='analyzing dataset...';
+  const r=await(await fetch(`/api/train/suggest_preset?dataset=${ds}&output=${encodeURIComponent(v('outbase')||'')}`)).json();
+  if(r.error){out.textContent='Error: '+r.error;return;}
+  const alts=(r.alternative_presets||[]).map(a=>
+    `<div>&middot; ${a.preset} (${a.confidence.toFixed(2)}) - ${a.reason}</div>`).join('');
+  const warns=(r.warnings||[]).map(w=>`<div style="color:var(--warn,#d90)">! ${w}</div>`).join('');
+  out.innerHTML=`<b>${r.recommended_preset}</b> &middot; confidence ${r.confidence.toFixed(2)}`+
+    ` <button class="mini" onclick="usePreset('${r.recommended_preset}')">Use This Preset</button>`+
+    `<div style="margin-top:4px">${r.reason}</div>${alts}${warns}`;
+}
+function usePreset(name){
+  const sel=document.getElementById('t_preset');
+  if(![...sel.options].some(o=>o.value===name)){
+    sel.innerHTML+=`<option>${name}</option>`;
+  }
+  sel.value=name;
 }
 function runTrain(){
   const ds=v('t_dataset');
@@ -1869,6 +1938,88 @@ async function saveProject(){
   document.getElementById('s_msg').textContent=r.ok?
     ('Saved to '+r.path+' at '+new Date().toLocaleTimeString()+' (applies to new jobs immediately)'):('Error: '+r.error);
 }
+// ---------- MergeForge ----------
+let mfEntries=[];
+function mfSel(){return mfEntries.filter(e=>document.getElementById('mfc_'+e.lora_id)&&document.getElementById('mfc_'+e.lora_id).checked).map(e=>e.lora_id);}
+async function mfScan(){
+  const r=await(await fetch('/api/mergeforge/scan')).json();
+  mfEntries=r.entries||[];
+  document.getElementById('mf_scan_sum').textContent=
+    r.library_size+' LoRAs | roles: '+Object.entries(r.role_counts||{}).map(([k,v])=>k+':'+v).join(' ')+
+    (r.merge_ready?' | merge-ready':' | '+(r.notes||[]).join('; '));
+  document.getElementById('mf_library').innerHTML=mfEntries.map(e=>
+    '<div style="display:flex;gap:8px;align-items:center;padding:4px 2px;border-bottom:1px solid var(--line)">'+
+    '<input type="checkbox" id="mfc_'+e.lora_id+'">'+
+    '<div style="flex:1"><b style="font-size:12px">'+e.display_name+'</b>'+
+    ' <span class="sub">'+e.role+' &middot; '+e.family+'</span></div>'+
+    '<span class="sub" title="'+e.health.reasons.join('; ')+'">health '+e.health.grade+' ('+e.health.score+')</span></div>').join('');
+  mfRecs();
+}
+async function mfRecs(){
+  const r=await(await fetch('/api/mergeforge/recommendations')).json();
+  const g=r.groups||[];
+  document.getElementById('mf_recs').innerHTML=g.length?g.map(x=>
+    '<div style="padding:6px 0;border-bottom:1px solid var(--line)">'+
+    '<b style="font-size:12px">'+x.title+'</b> <span class="sub">'+x.compatibility.verdict+' ('+x.compatibility.score+')</span><br>'+
+    '<span class="sub">'+x.members.map(m=>m.lora_id+' @'+m.weight).join(' + ')+'</span><br>'+
+    '<span class="sub">'+x.rationale+'</span> '+
+    '<button class="mini" onclick="mfUseGroup(\\''+x.group_id+'\\')">Use</button></div>').join('')
+    :'need at least 2 classified LoRAs for recommendations';
+  window._mfGroups=g;
+}
+function mfUseGroup(gid){
+  const g=(window._mfGroups||[]).find(x=>x.group_id===gid); if(!g)return;
+  mfEntries.forEach(e=>{const c=document.getElementById('mfc_'+e.lora_id); if(c)c.checked=false;});
+  g.members.forEach(m=>{const c=document.getElementById('mfc_'+m.lora_id); if(c)c.checked=true;});
+  document.getElementById('mf_name').value=gid+'_v1';
+  mfPlan();
+}
+let mfDraft=null;
+async function mfPlan(){
+  const sel=mfSel();
+  if(sel.length<2){document.getElementById('mf_plan').innerHTML='<span class="sub">tick at least 2 LoRAs in the scan list</span>';return;}
+  const r=await(await fetch('/api/mergeforge/plan',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({loras:sel})})).json();
+  if(r.error){document.getElementById('mf_plan').textContent=r.error;return;}
+  mfDraft=r.recipe_draft;
+  const c=r.compatibility;
+  document.getElementById('mf_plan').innerHTML=
+    '<b>Compatibility: '+c.overall_verdict+' ('+c.overall_score+')</b><br>'+
+    (c.pairs||[]).filter(p=>p.warnings.length).map(p=>'<span class="sub">'+p.warnings.join('; ')+'</span>').join('<br>')+
+    '<div style="margin-top:6px">'+(mfDraft.inputs||[]).map((i,ix)=>
+      '<div style="display:flex;gap:6px;align-items:center;margin:2px 0"><span style="flex:1;font-size:12px">'+i.name+'</span>'+
+      '<input type="number" step="0.05" style="width:70px" id="mfw_'+ix+'" value="'+i.weight+'"></div>').join('')+'</div>'+
+    '<span class="sub">'+(r.weights.notes||[]).join('; ')+'</span>';
+  document.getElementById('mf_go').style.display=r.ready?'inline-block':'none';
+  document.getElementById('mf_msg').textContent=r.ready?'':'verdict is avoid - adjust selection';
+}
+async function mfMerge(){
+  if(!mfDraft)return;
+  mfDraft.inputs.forEach((i,ix)=>{const w=document.getElementById('mfw_'+ix); if(w)i.weight=parseFloat(w.value)||i.weight;});
+  const r=await(await fetch('/api/mergeforge/merge',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({recipe:mfDraft,output_name:v('mf_name')||'mergeforge_v1',
+      target_rank:parseInt(v('mf_rank'))||0})})).json();
+  document.getElementById('mf_msg').textContent=r.ok?('queued as job #'+r.job_id+' - watch the queue below'):('error: '+r.error);
+  if(r.ok)mfLoadRecipes();
+}
+async function mfLoadRecipes(){
+  const r=await(await fetch('/api/mergeforge/recipes?output='+encodeURIComponent(v('outbase')||''))).json();
+  const recs=r.recipes||[];
+  document.getElementById('mf_recipes').innerHTML=recs.length?recs.map(x=>
+    '<div style="padding:5px 0;border-bottom:1px solid var(--line)"><b style="font-size:12px">'+x.name+'</b>'+
+    ' <span class="sub">'+x.method+' &middot; '+(x.created_at||'').slice(0,16)+'</span><br>'+
+    '<span class="sub">'+(x.inputs||[]).map(i=>i.name+' @'+i.weight).join(' + ')+'</span>'+
+    (x.output?'<br><span class="sub">-&gt; '+x.output+'</span>':'')+
+    ' <button class="mini" onclick="mfRerun(\\''+x.recipe_id+'\\')">Re-run</button></div>').join('')
+    :'none yet';
+  window._mfRecipes=recs;
+}
+async function mfRerun(rid){
+  const rec=(window._mfRecipes||[]).find(x=>x.recipe_id===rid); if(!rec)return;
+  const r=await(await fetch('/api/mergeforge/merge',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({recipe:rec,output_name:rec.name+'_rerun'})})).json();
+  document.getElementById('mf_msg').textContent=r.ok?('re-run queued as job #'+r.job_id):('error: '+r.error);
+}
 poll();
 appPoll();   // Playground is the default page - start app status checks now
 </script></body></html>
@@ -2010,6 +2161,53 @@ class StudioHandler(BaseHTTPRequestHandler):
                 ]})
             except Exception as exc:
                 self._json({"total": 0, "frames": [], "error": str(exc)})
+
+        elif path == "/api/train/presets":
+            try:
+                from ..train.presets import PRESETS
+                self._json({"presets": sorted(PRESETS)})
+            except Exception as exc:
+                self._json({"presets": [], "error": str(exc)})
+
+        elif path == "/api/train/suggest_preset":
+            try:
+                from ..train.preset_recommender import suggest_preset
+                ds = int((query.get("dataset") or ["0"])[0])
+                recipe = (query.get("recipe") or [None])[0]
+                conn = manifest.connect(self._out_base(query))
+                try:
+                    rec = suggest_preset(conn, ds, recipe_name=recipe)
+                finally:
+                    conn.close()
+                self._json(rec)
+            except ValueError as exc:
+                self._json({"error": str(exc)})
+            except Exception as exc:
+                self._json({"error": str(exc)})
+
+        elif path == "/api/mergeforge/scan":
+            try:
+                from ..mergeforge import analyze_library
+                self._json(analyze_library(self.project))
+            except Exception as exc:
+                self._json({"entries": [], "role_counts": {},
+                            "library_size": 0, "merge_ready": False,
+                            "notes": [str(exc)]})
+
+        elif path == "/api/mergeforge/recommendations":
+            try:
+                from ..mergeforge import build_recommendations
+                self._json({"groups": build_recommendations(self.project)})
+            except Exception as exc:
+                self._json({"groups": [], "error": str(exc)})
+
+        elif path == "/api/mergeforge/recipes":
+            try:
+                from ..mergeforge import load_recipes
+                self._json({"recipes":
+                            load_recipes(self._out_base(query))})
+            except Exception as exc:
+                self._json({"recipes": [], "error": str(exc)})
 
         elif path == "/api/concept/cards":
             try:
@@ -2412,6 +2610,40 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._json(stop_app(str(payload.get("app", ""))))
         elif path == "/api/cancel":
             self._json({"ok": QUEUE.cancel(int(payload.get("id", 0)))})
+        elif path == "/api/mergeforge/plan":
+            try:
+                from ..mergeforge import wizard_plan
+                self._json(wizard_plan(
+                    self.project,
+                    [str(i) for i in (payload.get("loras") or [])]))
+            except Exception as exc:
+                self._json({"ready": False, "error": str(exc)})
+
+        elif path == "/api/mergeforge/merge":
+            try:
+                from ..mergeforge import execute_recipe, validate_recipe
+                rec, problems = validate_recipe(payload.get("recipe") or {})
+                if len(rec.get("inputs") or []) < 2:
+                    self._json({"ok": False,
+                                "error": "; ".join(problems)
+                                or "need at least 2 inputs"})
+                    return
+                out_base = self._out_base({})
+                name = str(payload.get("output_name") or rec["name"])
+                rank = int(payload.get("target_rank") or 0)
+                prj = self.project
+
+                def factory():
+                    return execute_recipe(prj, out_base, rec,
+                                          output_name=name,
+                                          target_rank=rank)
+                job_id = QUEUE.submit(f"mergeforge {name}", factory)
+                self._json({"ok": True, "job_id": job_id,
+                            "recipe_id": rec["recipe_id"],
+                            "notes": problems})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)})
+
         elif path == "/api/concept/resolve":
             try:
                 from .. import lora_explorer as lx

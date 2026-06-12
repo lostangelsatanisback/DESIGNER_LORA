@@ -86,6 +86,8 @@ class SmartCurateConfig:
     det_size: int = 640
     batch_log_every: int = 100
     rescan: bool = False                   # re-run detection on already-scanned frames
+    auto_rotate: bool = True               # try 90/180/270 when no face found;
+                                           # rotate the frame file upright in place
 
 
 @dataclass
