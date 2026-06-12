@@ -250,6 +250,28 @@ MIGRATIONS: dict[int, str] = {
         ALTER TABLE variation_jobs ADD COLUMN risk_level TEXT;
         ALTER TABLE variation_jobs ADD COLUMN status TEXT DEFAULT 'planned';
     """,
+    # v10 - Wardrobe Variation & Selective Region Editing
+    10: """
+        CREATE TABLE IF NOT EXISTS wardrobe_edits (
+            edit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            image_path TEXT,
+            mask_path TEXT,
+            region_id TEXT,
+            edit_mode TEXT,
+            prompt TEXT,
+            negative TEXT,
+            loras TEXT,
+            denoise REAL,
+            seed INTEGER,
+            preserve_background INTEGER,
+            preserve_pose INTEGER,
+            identity_score REAL,
+            risk_level TEXT,
+            readiness TEXT,
+            output_path TEXT,
+            created_at TEXT
+        );
+    """,
 }
 
 SCHEMA_VERSION = max(MIGRATIONS)

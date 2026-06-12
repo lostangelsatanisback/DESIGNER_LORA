@@ -1,3 +1,3 @@
 """LoRA Designer Studio - local, private, production-grade LoRA dataset pipeline."""
 
-__version__ = "3.8.0"
+__version__ = "3.9.0"

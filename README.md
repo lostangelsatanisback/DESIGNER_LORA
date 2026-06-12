@@ -1,4 +1,35 @@
-# LoRA Designer Studio (v3.8)
+# LoRA Designer Studio (v3.9)
+
+## Wardrobe Variation & Selective Region Editing (v3.9)
+
+New hub page **Wardrobe Variation**: identity-preserving wardrobe, garment,
+and region edits on your own character images (`lora_studio/wardrobe.py`).
+
+- **Region presets** - Upper Body/Torso, Lower Body/Bottomwear, Full Body
+  Wardrobe Replacement, Arms & Hands, Background + Environment; each with
+  studio-tuned mask blur/expansion, recommended denoise range, identity
+  priority, background policy, suggested guidance modules (OpenPose /
+  Depth / SoftEdge / Canny), and risk notes.
+- **Tool readiness panel** - per-region model requirements detected
+  against your reForge layout (inpainting checkpoint, ControlNet modules,
+  IP-Adapter/FaceID identity guidance, optional InsightFace post-process)
+  with found / missing / optional / not-configured status and placement
+  paths. Nothing hard-fails when components are absent.
+- **Identity-preservation policy** - the edit stack resolves through stack
+  intelligence (preservation score + risk level); high denoise on
+  identity-priority regions, missing anchors, pose-unlock on full-body
+  edits, and over-strong concept stacks all produce actionable studio
+  suggestions before generation.
+- **Edit modes** - garment replacement / layering, style variation, full
+  wardrobe variation, background-environment variation; one click reuses
+  the current Concept Control stack. Payloads target the existing Forge
+  img2img/inpaint API (mask, masked-only inpaint, CoreShift sampler/clip
+  skip, ControlNet units; pose unit respects the pose-consistency toggle).
+- **Manifest v10** - every edit recorded in `wardrobe_edits` (source, mask,
+  region, mode, prompts, stack, settings, identity score, readiness
+  snapshot, output path); generation runs on the hub job queue, results in
+  `wardrobe_edits/`. `OPTIONAL_HOOKS` reserves segmentation, identity
+  post-process, quality scoring, and pose extraction.
 
 ## One-Click Character + Concept Stack Workflow (v3.8)
 

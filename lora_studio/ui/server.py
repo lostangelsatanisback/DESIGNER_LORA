@@ -397,6 +397,7 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
   <div class="group">Generate</div>
   <div class="tab pg on" data-g="play">Playground</div>
   <div class="tab pg" data-g="concept">Concept Control</div>
+  <div class="tab pg" data-g="wardrobe">Wardrobe Variation</div>
   <div class="group">Build</div>
   <div class="tab pg" data-g="factory">Dataset Factory</div>
   <div class="tab pg" data-g="wizard">Create Wizard</div>
@@ -439,6 +440,44 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
 </div>
 
 <!-- ============ FACTORY (embedded) ============ -->
+<div class="page" id="page-wardrobe">
+<h2>Wardrobe Variation</h2>
+<div class="sub">selective region editing &middot; identity-preserving inpainting &middot; garment replacement &middot; visual continuity</div>
+<div class="filters">
+  <div style="flex:1"><label>Character image path</label>
+    <input id="wd_image" placeholder="/path/to/character.png"></div>
+  <div><label>Mask image (optional)</label><input id="wd_mask" placeholder="manual mask path"></div>
+</div>
+<div class="filters">
+  <div><label>Region</label><select id="wd_region" onchange="wdRegion()"></select></div>
+  <div><label>Edit mode</label>
+    <select id="wd_mode">
+      <option value="garment_replacement">Garment replacement</option>
+      <option value="garment_layering">Garment layering</option>
+      <option value="style_variation">Style variation</option>
+      <option value="full_wardrobe_variation">Full wardrobe variation</option>
+      <option value="background_environment_variation">Background / environment variation</option>
+    </select></div>
+  <div><label>Denoise (0 = recommended)</label><input id="wd_denoise" value="0" style="width:70px"></div>
+  <div><label>Seed</label><input id="wd_seed" value="42" style="width:80px"></div>
+  <div style="align-self:flex-end">
+    <label style="font-size:11px"><input type="checkbox" id="wd_pose" checked> pose consistency</label>
+    <label style="font-size:11px"><input type="checkbox" id="wd_bg" checked> background consistency</label>
+    <label style="font-size:11px"><input type="checkbox" id="wd_stack" checked> use Concept Control stack</label>
+  </div>
+</div>
+<div id="wd_region_info" style="font-size:11px;color:var(--dim);margin-bottom:6px"></div>
+<div class="filters">
+  <div style="flex:1"><label>Garment / fashion direction</label>
+    <input id="wd_prompt" placeholder="tailored charcoal blazer, satin blouse, editorial styling"></div>
+  <div style="align-self:flex-end">
+    <button class="mini" onclick="wdReadiness()">Check readiness</button>
+    <button onclick="wdGenerate()">Generate edit</button></div>
+</div>
+<div id="wd_readiness" style="font-size:12px"></div>
+<div id="wd_result" style="font-size:12px;margin-top:6px"></div>
+</div>
+
 <div class="page" id="page-concept">
 <h2>Concept Control</h2>
 <div class="sub">Visual LoRA Explorer &middot; attribute controls &middot; stack intelligence &middot; controlled variation</div>
@@ -1027,6 +1066,7 @@ document.querySelectorAll('.tab.pg').forEach(t=>t.onclick=()=>{
   if(t.dataset.g==='test'){loadEvals();appPoll();}
   if(t.dataset.g==='play'||t.dataset.g==='factory')appPoll();
   if(t.dataset.g==='concept'){loadConceptSliders();loadConceptCards();loadStarters();}
+  if(t.dataset.g==='wardrobe')loadWardrobe();
 });
 
 // ============ Concept Control ============
@@ -1144,6 +1184,59 @@ async function ccResolve(){
   document.getElementById('cc_balance_btn').style.display=hasRec?'':'none';
   document.getElementById('cc_clearpins_btn').style.display=Object.keys(ccOverrides).length?'':'none';
   return r;
+}
+let wdPresets=[];
+async function loadWardrobe(){
+  if(wdPresets.length)return;
+  const r=await(await fetch('/api/wardrobe/presets')).json();
+  wdPresets=r.presets||[];
+  document.getElementById('wd_region').innerHTML=wdPresets.map(p=>
+    `<option value="${p.region_id}">${p.label}</option>`).join('');
+  wdRegion();
+}
+function wdRegion(){
+  const p=wdPresets.find(x=>x.region_id===v('wd_region'));if(!p)return;
+  document.getElementById('wd_region_info').innerHTML=
+    `${p.description} &middot; recommended denoise ${p.recommended_denoise[0]}-${p.recommended_denoise[1]} `+
+    `&middot; identity priority <b>${p.identity_priority}</b> &middot; guidance: ${p.recommended_controlnets.join(', ')}`+
+    `<br><span style="color:var(--dim)">${p.notes}</span>`;
+}
+function wdRequest(){
+  const loras=[];
+  if(document.getElementById('wd_stack').checked&&typeof ccSel!=='undefined')
+    for(const k in ccSel)loras.push([k,ccSel[k]]);
+  return {image_path:v('wd_image')||'',mask_path:v('wd_mask')||'',
+    region_id:v('wd_region'),edit_mode:v('wd_mode'),
+    garment_direction_prompt:v('wd_prompt')||'',
+    selected_loras:loras,
+    preserve_pose:document.getElementById('wd_pose').checked,
+    preserve_background:document.getElementById('wd_bg').checked,
+    denoise:parseFloat(v('wd_denoise'))||0,
+    seed:parseInt(v('wd_seed'))||42,output:v('outbase')||''};
+}
+async function wdReadiness(){
+  const r=await(await fetch('/api/wardrobe/readiness',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(wdRequest())})).json();
+  if(r.error){alert(r.error);return;}
+  const reqs=(r.model_requirements||[]).map(m=>{
+    const col=m.detected==='found'?'var(--ok,#4caf50)':m.detected==='missing'?'var(--err)':'var(--dim)';
+    return `<tr><td>${m.category}</td><td style="color:${col}">${m.detected}</td>`+
+      `<td style="color:var(--dim)">${m.guidance}<br><span style="font-size:10px">${(m.expected_paths||[]).join(', ')}</span></td></tr>`;
+  }).join('');
+  document.getElementById('wd_readiness').innerHTML=
+    `<div><b>${r.region}</b> &middot; denoise ${r.denoise} &middot; identity preservation `+
+    `<b>${r.identity_preservation_score}</b> (${r.identity_risk_level} risk)</div>`+
+    (r.auto_adjustment_suggestions||[]).map(s=>`<div style="color:var(--warn)">! ${s}</div>`).join('')+
+    (r.consistency_notes||[]).map(s=>`<div style="color:var(--dim)">${s}</div>`).join('')+
+    `<table><tr><th>component</th><th>status</th><th>guidance</th></tr>${reqs}</table>`;
+}
+async function wdGenerate(){
+  if(!v('wd_image')){alert('Set the character image path first.');return;}
+  const r=await(await fetch('/api/wardrobe/generate',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(wdRequest())})).json();
+  document.getElementById('wd_result').innerHTML=r.ok?
+    `Queued as hub job #${r.job_id} - watch the Pipeline page; results land in wardrobe_edits/.`:
+    `<span style="color:var(--err)">${r.error||'failed'}</span>`;
 }
 async function loadStarters(){
   try{
@@ -1808,6 +1901,10 @@ class StudioHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"cards": [], "items": [], "error": str(exc)})
 
+        elif path == "/api/wardrobe/presets":
+            from ..wardrobe import list_region_presets
+            self._json({"presets": list_region_presets()})
+
         elif path == "/api/concept/starters":
             try:
                 from .. import lora_explorer as lx
@@ -2186,6 +2283,46 @@ class StudioHandler(BaseHTTPRequestHandler):
                                       "source": "visual_explorer",
                                       "concept_tags":
                                           c.profile.influence_tags}})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)})
+
+        elif path == "/api/wardrobe/readiness":
+            try:
+                from .. import lora_explorer as lx
+                from ..wardrobe import (WardrobeEditRequest,
+                                        analyze_edit_readiness)
+                known = WardrobeEditRequest.__dataclass_fields__
+                req = WardrobeEditRequest(**{k: v for k, v in payload.items()
+                                             if k in known})
+                cards = lx.scan_loras_cached(self.project)
+                self._json(analyze_edit_readiness(self.project, req, cards))
+            except Exception as exc:
+                self._json({"error": str(exc)})
+
+        elif path == "/api/wardrobe/generate":
+            try:
+                from ..wardrobe import WardrobeEditRequest
+                known = WardrobeEditRequest.__dataclass_fields__
+                req = WardrobeEditRequest(**{k: v for k, v in payload.items()
+                                             if k in known})
+                if not Path(req.image_path).expanduser().exists():
+                    self._json({"ok": False,
+                                "error": "Character image not found - "
+                                         "check the image path."})
+                    return
+                prj = self.project
+                out_base = Path(
+                    str(payload.get("output")
+                        or getattr(self.server, "output_base",
+                                   prj.output_base))).expanduser()
+
+                def factory():
+                    from ..wardrobe import generate_wardrobe_edit
+                    conn = manifest.connect(out_base)
+                    return generate_wardrobe_edit(prj, conn, req)
+                job_id = QUEUE.submit(
+                    f"wardrobe_edit {req.region_id}", factory)
+                self._json({"ok": True, "job_id": job_id})
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)})
 
