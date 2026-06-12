@@ -151,7 +151,9 @@ def detect_type(a: dict) -> list[dict]:
     fm = a.get("framing_mix", {})
     face = a.get("face_rate", 0.0)
     id_std = a.get("id_std")
-    consistency = max(0.0, 1.0 - (id_std or 1.0) * 4) if id_std is not None else 0.3
+    # NOTE: id_std == 0.0 means PERFECT consistency, not missing data -
+    # `or` must not be used here (py3.12's exact sum() yields true 0.0).
+    consistency = max(0.0, 1.0 - id_std * 4) if id_std is not None else 0.3
     entropy = a.get("cluster_entropy")
     spread = entropy if entropy is not None else 0.5
     closeup = fm.get("closeup", 0) + fm.get("portrait", 0)
@@ -178,6 +180,17 @@ def detect_type(a: dict) -> list[dict]:
         "detail": f"closeup share {fm.get('closeup', 0):.0%}, sharpness {sharp:.0f}",
         "explicit": f"explicit-tag rate {expl:.0%}",
     }
+    # Identity-priority guard: with strong face presence and stable
+    # identity consistency, character detection must not be displaced by
+    # style - scene diversity alone is not evidence of a style dataset
+    # when the subject is clearly present in most frames.  Genuinely
+    # low-face datasets are unaffected (guard requires face >= 0.70).
+    if (face >= 0.70 and consistency >= 0.55
+            and scores["style"] >= scores["character"]):
+        scores["character"] = min(1.0, scores["style"] + 0.05)
+        reasons["character"] += (" (identity-priority: strong face rate "
+                                 "and identity consistency)")
+
     out = [{"type": t, "score": round(min(1.0, max(0.0, s)), 3),
             "reason": reasons[t]} for t, s in scores.items()]
     return sorted(out, key=lambda d: -d["score"])

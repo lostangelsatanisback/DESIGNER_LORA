@@ -128,3 +128,19 @@ def test_wizard_build_only_chain(tmp_path):
         (Path(tmp_path / "DATASET").glob("v*__wizard_character").__next__()
          / "dataset.json").read_text())
     assert snap["counts"]["train"] + snap["counts"]["val"] == 8
+
+
+def test_character_detection_with_exact_zero_id_std():
+    """Regression (py3.12/Colab): id_std == 0.0 is PERFECT consistency,
+    not missing data - must classify character, never style."""
+    from lora_studio.wizard import detect_type
+    a = {"face_rate": 0.95, "id_std": 0.0, "cluster_entropy": 1.0,
+         "framing_mix": {"portrait": 0.95, "none": 0.05},
+         "explicit_rate": 0.0, "sharpness_mean": 100}
+    ranking = detect_type(a)
+    assert ranking[0]["type"] == "character"
+    # low-face datasets still classify as style (guard must not leak)
+    b = {"face_rate": 0.1, "id_std": None, "cluster_entropy": 1.0,
+         "framing_mix": {"none": 0.9, "portrait": 0.1},
+         "explicit_rate": 0.0, "sharpness_mean": 100}
+    assert detect_type(b)[0]["type"] == "style"

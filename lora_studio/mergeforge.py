@@ -600,7 +600,14 @@ def execute_recipe(prj: Project, output_base: Path, recipe: dict,
             if actual != item["sha256"]:
                 yield (f"  WARNING: sha256 drift on {p.name} - file changed "
                        "since recipe was written (continuing)")
-        sd = load_file(str(p))
+        try:
+            sd = load_file(str(p))
+        except Exception as exc:
+            yield (f"FATAL: {p.name} is not a readable .safetensors file "
+                   f"({exc.__class__.__name__}: {exc}). The file may be "
+                   "truncated, corrupted, or a different format - "
+                   "re-export or re-download it, then retry.")
+            return
         if not module_bases(sd.keys()):
             yield f"FATAL: {p.name} has no kohya lora_down/up modules."
             return

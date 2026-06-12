@@ -111,7 +111,10 @@ def test_payload_builder_identity_preserving(tmp_path):
 
 
 def test_readiness_identity_policy(tmp_path):
-    from tests.test_concept import _card
+    try:                                   # portable on every runner
+        from tests.helpers import _card
+    except ImportError:
+        from helpers import _card
     cards = [_card("idl_character", "identity"),
              _card("sty_a", "style", "high"), _card("sty_b", "style", "high")]
     req = WardrobeEditRequest(

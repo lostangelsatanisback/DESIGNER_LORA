@@ -227,10 +227,12 @@ def test_unique_path_never_overwrites(tmp_path):
 
 
 def test_execute_recipe_graceful_without_safetensors(tmp_path):
-    """Engine must fail with a clear FATAL line (not raise) when inputs
-    are unusable or safetensors is absent."""
+    """Engine must fail with a clear FATAL line (never a raw exception)
+    whether safetensors is installed (invalid header -> actionable
+    message) or absent (dependency message). Deterministic on Mac,
+    Linux, Colab and CI."""
     f1, f2 = tmp_path / "a.safetensors", tmp_path / "b.safetensors"
-    f1.write_bytes(b"\x00" * 16)
+    f1.write_bytes(b"\x00" * 16)            # invalid header either way
     f2.write_bytes(b"\x00" * 16)
 
     class _P:
@@ -238,5 +240,50 @@ def test_execute_recipe_graceful_without_safetensors(tmp_path):
         base_model = ""
     rec = make_recipe("t", [(str(f1), 0.7), (str(f2), 0.3)],
                       hash_files=False)
-    lines = list(execute_recipe(_P(), tmp_path, rec))
+    lines = list(execute_recipe(_P(), tmp_path, rec))   # must not raise
     assert any(line.startswith("FATAL") for line in lines)
+
+
+def test_execute_recipe_actionable_on_corrupt_file(tmp_path):
+    """Simulate an installed safetensors whose loader rejects the file:
+    the engine must convert the raw error into an actionable FATAL."""
+    import sys
+    import types
+
+    f1, f2 = tmp_path / "a.safetensors", tmp_path / "b.safetensors"
+    f1.write_bytes(b"\x00" * 16)
+    f2.write_bytes(b"\x00" * 16)
+
+    class _FakeSafetensorError(Exception):
+        pass
+
+    def _raise(path):
+        raise _FakeSafetensorError(
+            "Error while deserializing header: invalid JSON in header")
+
+    fake_st = types.ModuleType("safetensors")
+    fake_np = types.ModuleType("safetensors.numpy")
+    fake_np.load_file = _raise
+    fake_np.save_file = lambda *a, **k: None
+    fake_st.numpy = fake_np
+    saved = {k: sys.modules.get(k) for k in ("safetensors",
+                                             "safetensors.numpy")}
+    sys.modules["safetensors"] = fake_st
+    sys.modules["safetensors.numpy"] = fake_np
+    try:
+        class _P:
+            lora_output_dir = str(tmp_path / "out")
+            base_model = ""
+        rec = make_recipe("t", [(str(f1), 0.7), (str(f2), 0.3)],
+                          hash_files=False)
+        lines = list(execute_recipe(_P(), tmp_path, rec))
+        fatal = [l for l in lines if l.startswith("FATAL")]
+        assert fatal, lines
+        assert "not a readable .safetensors" in fatal[0]
+        assert "re-export or re-download" in fatal[0]
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
