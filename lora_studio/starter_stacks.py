@@ -53,6 +53,11 @@ def _pick_concept(cards: list[LoraCard], family: str,
             continue
         if set(getattr(c.profile, "conflict_families", ())) & chosen_fams:
             continue
+        # reverse direction: an already-chosen LoRA vetoes this family
+        if any(family in getattr(ch.profile, "conflict_families", ())
+               or c.lora_id in ch.profile.known_conflicts
+               for ch in chosen):
+            continue
         pool.append(c)
     if not pool:
         return None

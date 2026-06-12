@@ -442,6 +442,12 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
 <div class="page" id="page-concept">
 <h2>Concept Control</h2>
 <div class="sub">Visual LoRA Explorer &middot; attribute controls &middot; stack intelligence &middot; controlled variation</div>
+<div style="border:1px solid #2a3142;border-radius:8px;padding:10px;margin-bottom:14px">
+  <b>Character + Concept Stack</b>
+  <span style="color:var(--dim);font-size:11px"> &mdash; guided flow: identity anchor &rarr; concept layers &rarr; resolve &rarr; Playground</span>
+  <div id="cc_wf_status" style="font-size:11px;color:var(--dim);margin:4px 0">Loading library overview...</div>
+  <div id="cc_starters" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+</div>
 <div class="filters">
   <div><label>Search</label><input id="cc_search" oninput="loadConceptCards()"></div>
   <div><label>Concept family</label>
@@ -479,7 +485,7 @@ th{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px}
 <div style="display:flex;gap:8px;margin-bottom:8px">
   <button onclick="ccResolve()">Resolve stack</button>
   <button class="mini" onclick="ccSend()">Send to Playground</button>
-  <button class="mini" onclick="ccSavePreset()">Save stack preset</button>
+  <button class="mini" onclick="ccSaveWorkflowPreset()">Save stack preset</button>
   <button class="mini" onclick="ccLoadPresets()">Saved presets</button>
   <button class="mini" id="cc_balance_btn" style="display:none"
     onclick="ccApplyBalance()">Apply Suggested Balance</button>
@@ -1020,7 +1026,7 @@ document.querySelectorAll('.tab.pg').forEach(t=>t.onclick=()=>{
   if(t.dataset.g==='train'){loadRuns();loadTrainDatasets();}
   if(t.dataset.g==='test'){loadEvals();appPoll();}
   if(t.dataset.g==='play'||t.dataset.g==='factory')appPoll();
-  if(t.dataset.g==='concept'){loadConceptSliders();loadConceptCards();}
+  if(t.dataset.g==='concept'){loadConceptSliders();loadConceptCards();loadStarters();}
 });
 
 // ============ Concept Control ============
@@ -1139,6 +1145,46 @@ async function ccResolve(){
   document.getElementById('cc_clearpins_btn').style.display=Object.keys(ccOverrides).length?'':'none';
   return r;
 }
+async function loadStarters(){
+  try{
+    const ov=await(await fetch('/api/concept/workflow/overview')).json();
+    const st=document.getElementById('cc_wf_status');
+    if(!ov.ready){st.innerHTML='No identity anchor in the library yet - train or import a character identity LoRA, then Rescan.';
+      document.getElementById('cc_starters').innerHTML='';return;}
+    st.innerHTML=`${ov.library_size} LoRA(s) &middot; identity: <b>${ov.identity_candidates.join(', ')}</b> &middot; `+
+      `concept families: ${Object.keys(ov.concept_families).join(', ')||'none yet'}`;
+    const r=await(await fetch('/api/concept/starters')).json();
+    document.getElementById('cc_starters').innerHTML=(r.starters||[]).map(s=>{
+      if(!s.available)return `<div style="color:var(--dim);font-size:11px">${s.reasons[s.reasons.length-1]}</div>`;
+      return `<div style="border:1px solid #2a3142;border-radius:6px;padding:8px;width:230px">`+
+        `<b style="font-size:12px">${s.name}</b>`+
+        `<div style="font-size:10px;color:var(--dim)">${s.stack.map(l=>l[0]+':'+l[1]).join('<br>')}</div>`+
+        `<div style="font-size:10px">preservation <b style="color:${ccRiskColor(s.risk_level)}">${s.preservation_score}</b></div>`+
+        (s.warnings.length?`<div style="font-size:9px;color:var(--warn)">${s.warnings[0]}</div>`:'')+
+        `<button class="mini" style="margin-top:4px" title="${(s.reasons||[]).join('&#10;')}" `+
+        `onclick='ccApplyStarter(${JSON.stringify(s.weights)})'>Apply stack</button></div>`;
+    }).join('')||'<span style="color:var(--dim);font-size:11px">No starter stacks available yet.</span>';
+  }catch(e){}
+}
+function ccApplyStarter(weights){
+  ccSel={};ccOverrides={};
+  for(const k in weights){ccSel[k]=weights[k];ccOverrides[k]=weights[k];}
+  loadConceptCards();ccResolve();
+  window.scrollTo({top:document.getElementById('cc_stack').offsetTop-80,behavior:'smooth'});
+}
+async function ccSaveWorkflowPreset(){
+  const r=await ccResolve();if(!r)return;
+  const name=prompt('Stack preset name:','character_stack_v1');if(!name)return;
+  const weights={};
+  if(r.identity_anchor)weights[r.identity_anchor.lora_id]=r.identity_anchor.weight;
+  r.concept_loras.forEach(i=>{weights[i.lora_id]=i.weight;});
+  const res=await(await fetch('/api/concept/workflow/save_preset',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:name,weights:weights,slider_state:ccState(),
+      loras:Object.keys(ccSel),output:v('outbase')||''})})).json();
+  alert(res.ok?(`Preset '${name}' saved (preservation ${res.preservation_score}).`):(res.error||'failed'));
+  ccLoadPresets();
+}
 function ccApplyBalance(){
   if(!ccLastStack||!ccLastStack.recommended_weights)return;
   ccOverrides={...ccLastStack.recommended_weights};
@@ -1166,6 +1212,14 @@ async function ccLoadPresets(){
     '<span style="color:var(--dim)">No saved presets.</span>';
 }
 function ccApplyPreset(payload){
+  if(payload.preset_version===2){
+    ccSel={};ccOverrides={};
+    (payload.handoff&&payload.handoff.loras||[]).forEach(l=>{ccSel[l[0]]=l[1];ccOverrides[l[0]]=l[1];});
+    const st2=payload.slider_state||{};
+    for(const k in st2){const s=document.getElementById('ccs_'+k),n=document.getElementById('ccn_'+k);
+      if(s)s.value=st2[k];if(n)n.value=st2[k];}
+    loadConceptCards();ccResolve();return;
+  }
   ccSel=payload.sel||{};
   const st=payload.slider_state||{};
   for(const k in st){const s=document.getElementById('ccs_'+k),n=document.getElementById('ccn_'+k);
@@ -1754,6 +1808,25 @@ class StudioHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"cards": [], "items": [], "error": str(exc)})
 
+        elif path == "/api/concept/starters":
+            try:
+                from .. import lora_explorer as lx
+                from ..starter_stacks import recommend_starter_stacks
+                cards = lx.scan_loras_cached(self.project)
+                self._json({"starters": recommend_starter_stacks(
+                    cards, self.project.base_model)})
+            except Exception as exc:
+                self._json({"starters": [], "error": str(exc)})
+
+        elif path == "/api/concept/workflow/overview":
+            try:
+                from .. import lora_explorer as lx
+                from ..stack_workflow import workflow_overview
+                self._json(workflow_overview(
+                    lx.scan_loras_cached(self.project)))
+            except Exception as exc:
+                self._json({"ready": False, "error": str(exc)})
+
         elif path == "/api/concept/variation/axes":
             from ..concept_control import variation_axes
             from ..batch_variations import VARIATION_MODES
@@ -2113,6 +2186,40 @@ class StudioHandler(BaseHTTPRequestHandler):
                                       "source": "visual_explorer",
                                       "concept_tags":
                                           c.profile.influence_tags}})
+            except Exception as exc:
+                self._json({"ok": False, "error": str(exc)})
+
+        elif path == "/api/concept/workflow/save_preset":
+            try:
+                from .. import lora_explorer as lx
+                from ..concept_control import (ConceptSliderState,
+                                               resolve_controlled_stack,
+                                               save_preset)
+                from ..stack_workflow import make_stack_preset
+                cards = lx.scan_loras_cached(self.project)
+                sel = payload.get("weights") or {}
+                chosen = [c for c in cards if c.lora_id in sel
+                          or c.lora_id in (payload.get("loras") or [])]
+                stack = resolve_controlled_stack(
+                    chosen,
+                    ConceptSliderState(values=payload.get("slider_state")
+                                       or {}),
+                    self.project.base_model,
+                    overrides={k: float(v) for k, v in sel.items()} or None)
+                rec = make_stack_preset(
+                    str(payload.get("name") or "stack_preset"), stack,
+                    requested_weights=sel,
+                    slider_state=payload.get("slider_state") or {},
+                    notes=str(payload.get("notes") or ""))
+                conn = manifest.connect(Path(
+                    str(payload.get("output")
+                        or getattr(self.server, "output_base",
+                                   self.project.output_base))).expanduser())
+                save_preset(conn, rec["name"], "lora_stack", rec)
+                conn.close()
+                self._json({"ok": True, "preset_id": rec["preset_id"],
+                            "preservation_score":
+                                rec["preservation_score"]})
             except Exception as exc:
                 self._json({"ok": False, "error": str(exc)})
 

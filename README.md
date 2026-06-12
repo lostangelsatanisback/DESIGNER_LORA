@@ -1,4 +1,34 @@
-# LoRA Designer Studio (v3.7)
+# LoRA Designer Studio (v3.8)
+
+## One-Click Character + Concept Stack Workflow (v3.8)
+
+The Concept Control page now opens with a guided **Character + Concept
+Stack** builder: identity anchor -> concept layers -> resolve -> Playground.
+
+- **Recommended Starter Stacks** (`starter_stacks.py`) - explainable
+  templates built from your actual library (Identity + Editorial Style /
+  Studio Lighting / Fashion Study / Form Study / Material-Fabric Study /
+  Environment Style / Composition Study / Fashion + Lighting). Sidecar
+  metadata first, filename inference second, no ML required. Known
+  conflicts (both directions) are respected, weights start at the
+  conservative midpoint of each recommended range, every suggestion
+  resolves through stack intelligence and shows its preservation score,
+  risk level, reason codes, and warnings before one-click Apply.
+- **Stack preset v2** (`stack_workflow.py`) - presets now record preset id,
+  timestamps, identity anchor, concept layers with requested vs resolved
+  weights, slider state, preservation score, warnings/reason codes, base
+  model, and the exact Playground handoff. `validate_stack_preset()` reads
+  v2, legacy (`{"sel": ...}`), or partial payloads without ever raising;
+  the UI loads both generations.
+- **Library overview** - the builder header shows identity candidates and
+  concept families, with a clear guided empty state when no anchor exists.
+- **Performance** - `scan_loras_cached()` keys on folder mtimes + entry
+  counts, so hundreds of LoRAs browse instantly while file changes
+  invalidate immediately; all Concept Control endpoints share the cache
+  (Rescan forces a fresh walk).
+- **Extension points reserved** - per-axis response-curve overrides,
+  preset diff view, batch thumbnail grids, and CLIP probing via
+  `SIGNAL_HOOKS` slot in without schema changes.
 
 ## Concept Metadata & Sidecar Hardening (v3.7 - Concept Control Feature D)
 

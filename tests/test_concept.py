@@ -668,3 +668,123 @@ def test_priority_hints_in_resolver():
                          "lit": 0.2}, CR)
     assert "known_family_conflict" in st3.reason_codes
     assert any("family:lighting" in c for c in st3.conflicts)
+
+
+# ---------------------------------------------------------------------------
+# v3.8: One-Click Character + Concept Stack workflow
+# ---------------------------------------------------------------------------
+
+def test_starter_stack_recommendations():
+    from lora_studio.starter_stacks import recommend_starter_stacks
+    lit = _card("soft_studio_light", "lighting", "low")
+    fash = _card("editorial_wardrobe", "fashion", "low")
+    sty = _card("film_style", "style", "high")
+    cards = [_card("spook_character_v1", "identity"), lit, fash, sty]
+    recs = recommend_starter_stacks(cards, CR)
+    by_name = {r["name"]: r for r in recs}
+    assert by_name["Identity + Studio Lighting"]["available"]
+    s = by_name["Identity + Studio Lighting"]
+    assert s["stack"][0][0] == "spook_character_v1"      # anchor first
+    assert s["identity"] == "spook_character_v1"
+    assert 0 < s["preservation_score"] <= 1.0
+    assert any("identity anchor" in r for r in s["reasons"])
+    assert "conservative_concept_weights" in s["reasons"]
+    # combo template picks two non-conflicting families
+    combo = by_name.get("Identity + Fashion + Lighting")
+    assert combo and len(combo["stack"]) == 3
+    # family conflict respected: lighting-conflicting fashion is skipped
+    fash2 = _card("clashing_wardrobe", "fashion", "low")
+    fash2.profile.conflict_families = ["lighting"]
+    recs2 = recommend_starter_stacks(
+        [_card("idl_character", "identity"), fash2, lit], CR)
+    combo2 = [r for r in recs2 if r["name"] == "Identity + Fashion + Lighting"]
+    assert not combo2 or "clashing_wardrobe" not in \
+        [l[0] for r in combo2 for l in r["stack"]]
+    # no identity -> explainable empty state
+    none = recommend_starter_stacks([lit, fash], CR)
+    assert not none[0]["available"]
+    assert "no_identity_lora_found" in none[0]["reasons"]
+
+
+def test_workflow_overview_and_cache(tmp_path):
+    from lora_studio.lora_explorer import scan_loras_cached, _SCAN_CACHE
+    from lora_studio.stack_workflow import workflow_overview
+    _fake_safetensors(tmp_path / "a_character.safetensors", {})
+    _fake_safetensors(tmp_path / "b_style.safetensors", {})
+    prj = Project()
+    prj.lora_output_dir = str(tmp_path)
+    _SCAN_CACHE["key"] = None
+    cards = scan_loras_cached(prj)
+    assert {c.lora_id for c in cards} == {"a_character", "b_style"}
+    assert scan_loras_cached(prj) is cards            # cache hit
+    # adding a file invalidates (dir mtime + entry count key)
+    _fake_safetensors(tmp_path / "c_light.safetensors", {})
+    cards2 = scan_loras_cached(prj)
+    assert len(cards2) == 3 and cards2 is not cards
+    ov = workflow_overview(cards2)
+    assert ov["ready"] and ov["identity_candidates"] == ["a_character"]
+    assert "style" in ov["concept_families"]
+    assert not workflow_overview([])["ready"]
+
+
+def test_stack_preset_v2_roundtrip_and_legacy(tmp_path):
+    from lora_studio.stack_workflow import (make_stack_preset,
+                                            validate_stack_preset)
+    cards = [_card("idl_character", "identity"), _card("fash", "fashion")]
+    st = resolve_stack(cards, {"idl_character": 0.75, "fash": 0.4}, CR)
+    rec = make_stack_preset("editorial_v1", st,
+                            requested_weights={"idl_character": 0.75,
+                                               "fash": 0.4},
+                            slider_state={"garment_style_intensity": 0.6},
+                            notes="studio baseline")
+    assert rec["preset_version"] == 2 and rec["preset_id"].startswith("stack_")
+    assert rec["identity"]["lora_id"] == "idl_character"
+    assert rec["handoff"]["loras"][0] == ["idl_character", 0.75]
+    assert rec["preservation_score"] == st.identity_preservation_score
+    # v2 validates as-is
+    same, w = validate_stack_preset(rec)
+    assert same["preset_id"] == rec["preset_id"] and not w
+    # legacy normalizes with warning, handoff built from sel
+    legacy, w2 = validate_stack_preset(
+        {"sel": {"idl_character": 0.8, "sty": 0.3}})
+    assert legacy["preset_version"] == 2
+    assert ["idl_character", 0.8] in legacy["handoff"]["loras"]
+    assert any("legacy" in x for x in w2)
+    # garbage never raises
+    empty, _ = validate_stack_preset(None)
+    assert empty["handoff"]["loras"] == []
+    # manifest persistence via existing preset store
+    conn = manifest.connect(tmp_path)
+    save_preset(conn, rec["name"], "lora_stack", rec)
+    got = load_presets(conn, "lora_stack")[0]["payload"]
+    assert got["preset_id"] == rec["preset_id"]
+    conn.close()
+
+
+def test_send_stack_to_playground_handoff(tmp_path):
+    from lora_studio.stack_workflow import send_stack_to_playground
+    prj = Project()
+    prj.trigger_token, prj.class_word = "spookums", "person"
+    prj.base_model = CR
+    cards = [_card("idl_character", "identity"), _card("fash", "fashion")]
+    st = resolve_stack(cards, {"idl_character": 0.75, "fash": 0.4}, CR)
+    import lora_studio.pipeline_dag as pd
+    orig = pd.write_playground_preset
+    captured = {}
+    def fake(prj2, name, loras, path=None):
+        captured.update(name=name, loras=loras)
+        return tmp_path / "pp.json"
+    pd.write_playground_preset = fake
+    try:
+        send_stack_to_playground(prj, "wf_test", st)
+    finally:
+        pd.write_playground_preset = orig
+    assert captured["name"] == "wf_test"
+    assert captured["loras"][0] == ("idl_character", 0.75)
+    # empty stack raises a clear error
+    empty = resolve_stack([], base_model=CR)
+    try:
+        send_stack_to_playground(prj, "x", empty)
+        assert False
+    except ValueError as exc:
+        assert "identity anchor" in str(exc)
